@@ -52,12 +52,7 @@ def get_dataloader(dataset, batch_size, num_workers):
 
     train_aug = A.Compose([
         A.HorizontalFlip(p=0.5),
-        A.VerticalFlip(p=0.5),
-        A.RandomRotate90(p=0.5),
-        A.RandomBrightnessContrast(p=0.4),
-        A.ElasticTransform(p=0.2, alpha=120, sigma=120*0.05),
-        A.GaussianBlur(p=0.2),
-        A.RandomCrop(width=256, height=256, p=1.0),
+        A.RandomBrightnessContrast(p=0.2),
         A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
         ToTensorV2(),
     ])
