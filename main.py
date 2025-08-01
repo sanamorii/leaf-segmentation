@@ -32,9 +32,18 @@ WEIGHTS = "imagenet"
 EPOCHS = 50
 BEAN_DATASET = ""
 
+
 def get_args():
     parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        default="all",
+        help='training dataset',
+        choices=['all', 'bean', 'kale']
+    )
     return parser
+
 
 def get_dataloader(dataset, batch_size, num_workers):
     train_loader = None
@@ -101,10 +110,16 @@ def get_dataloader(dataset, batch_size, num_workers):
         train_ds = PlantDreamerAllBean(train_imgs, train_masks, transforms=train_aug)
         val_ds = PlantDreamerAllBean(val_imgs, val_masks, transforms=val_aug)
         train_loader = DataLoader(
-            train_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers,
+            train_ds,
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=num_workers,
         )
         val_loader = DataLoader(
-            val_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers,
+            val_ds,
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=num_workers,
         )
     else:
         raise Exception("invalid dataset")
@@ -112,7 +127,7 @@ def get_dataloader(dataset, batch_size, num_workers):
 
 
 def main():
-    
+
     unetplusplus = smp.UnetPlusPlus(
         encoder_name=ENCODER,
         encoder_weights=WEIGHTS,
@@ -123,10 +138,11 @@ def main():
     )
     unetplusplus.to(DEVICE)
     model = nn.DataParallel(unetplusplus)  # use multiple gpus
-    
+
     print("GPUs:", torch.cuda.device_count())
     print("Using", torch.cuda.device_count(), "GPUs")
     print("Model device:", next(model.parameters()).device)
+    print("Training model:", model.module.name)
 
     train_loader, val_loader = get_dataloader("all", 4, 2)
     optimiser = torch.optim.Adam(model.parameters(), lr=1e-4)

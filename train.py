@@ -5,6 +5,7 @@ import torch.optim as optim
 from torch.utils.data import Dataset
 from torchvision import transforms
 from torch.utils.data import DataLoader
+from torch.cuda.amp import GradScaler, autocast
 from PIL import Image
 from tqdm import tqdm
 
@@ -34,7 +35,7 @@ def train_fn(
     device,
     visualise: bool = False,
 ):
-    model.to(device)
+
     best_loss = np.inf
     cur_itrs = 0
     for epoch in range(epochs):
@@ -91,8 +92,8 @@ def train_fn(
         }
         if avg_val_loss < best_loss:
             best_loss = avg_val_loss
-            save_ckpt(checkpoint, f"checkpoints/{model.name}_best.pth")
-        save_ckpt(checkpoint, f"checkpoints/{model.name}_best.pth")
+            save_ckpt(checkpoint, f"checkpoints/{model.module.name}_best.pth")
+        save_ckpt(checkpoint, f"checkpoints/{model.module.name}_current.pth")
 
         if visualise:
             # Visualize first batch of validation
@@ -118,3 +119,5 @@ def train_fn(
                 ax[2].axis("off")
             plt.tight_layout()
             plt.show()
+    
+        torch.cuda.empty_cache()
