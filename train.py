@@ -20,6 +20,7 @@ import os
 import sys
 import cv2
 
+from dataset.bean import rgb_to_class
 from utils import overlay, save_ckpt
 
 def train_fn(
