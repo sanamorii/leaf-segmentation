@@ -46,8 +46,8 @@ class PlantDreamerAllBean(Dataset):
 
         if self.transforms:
             augmented = self.transforms(image=image, mask=mask)
-            image = augmented['image']
-            mask = augmented['mask']
+            image = augmented['image'].float()
+            mask = augmented['mask'].long()
         else:
             image = torch.from_numpy(image).permute(2, 0, 1).float() / 255.0
             mask = torch.from_numpy(mask).long()
