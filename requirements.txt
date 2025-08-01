@@ -5,7 +5,7 @@ torchmetrics
 matplotlib
 pandas
 pillow
-torchtnt=0.2.0
+torchtnt==0.2.0
 tdqm
 tabulate
 distinctipy
