@@ -85,7 +85,7 @@ def main():
         classes=len(COLOR_TO_CLASS),
     )
     
-    train_loader, val_loader = get_dataloader("all", 16, 4)
+    train_loader, val_loader = get_dataloader("all", 4, 2)
     optimiser = torch.optim.Adam(unetplusplus.parameters(), lr=1e-4)
     # loss_fn = nn.CrossEntropyLoss(ignore_index=255, reduction='mean')
     loss_fn = smp_losses.DiceLoss(mode='multiclass')
