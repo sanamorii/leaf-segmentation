@@ -20,7 +20,7 @@ import os
 import sys
 import cv2
 
-from utils import overlay, rgb_to_class, save_ckpt
+from utils import overlay, save_ckpt
 
 def train_fn(
     model,
