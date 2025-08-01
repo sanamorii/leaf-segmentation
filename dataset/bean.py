@@ -42,7 +42,7 @@ class PlantDreamerAllBean(Dataset):
     def __getitem__(self, idx):
         image = np.array(Image.open(self.image_paths[idx]).convert("RGB"))
         mask = np.array(Image.open(self.mask_paths[idx]).convert("RGB"))
-        mask = rgb_to_class(mask, class_colors=CLASS_COLORS) 
+        mask = rgb_to_class(mask, class_colors=COLOR_TO_CLASS) 
 
         if self.transforms:
             augmented = self.transforms(image=image, mask=mask)
@@ -74,7 +74,7 @@ class PlantDreamerBean(Dataset):
 
         image = np.array(Image.open(img_path).convert("RGB"))
         mask = np.array(Image.open(mask_path).convert("RGB"))
-        mask = rgb_to_class(mask, class_colors=CLASS_COLORS)  # class mask from RGB
+        mask = rgb_to_class(mask, class_colors=COLOR_TO_CLASS)  # class mask from RGB
 
         if self.transforms:
             augmented = self.transforms(image=image, mask=mask)
