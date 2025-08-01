@@ -121,6 +121,7 @@ def main():
         decoder_attention_type="scse",
         classes=len(COLOR_TO_CLASS),
     )
+    unetplusplus.to(DEVICE)
     model = nn.DataParallel(unetplusplus)  # use multiple gpus
     
     print("GPUs:", torch.cuda.device_count())
