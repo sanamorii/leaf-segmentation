@@ -1,0 +1,18 @@
+torch -i https://download.pytorch.org/whl/cu121
+torchvision -i https://download.pytorch.org/whl/cu121
+torchaudio -i https://download.pytorch.org/whl/cu121
+torchmetrics
+matplotlib
+pandas
+pillow
+torchtnt=0.2.0
+tdqm
+tabulate
+distinctipy
+cjm_pandas_utils
+cjm_psl_utils
+cjm_pil_utils
+cjm_pytorch_utils
+cjm_torchvision_tfms
+segmentation_models_pytorch
+albumentations
