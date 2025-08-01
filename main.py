@@ -67,7 +67,7 @@ def get_dataloader(dataset, batch_size, num_workers):
         ToTensorV2(),
     ])
 
-    all_pairs = collect_all_data("../data/beans")
+    all_pairs = collect_all_data("./data/beans")
     train_paths, val_paths = train_test_split(all_pairs, test_size=0.2, random_state=42)
     train_imgs, train_masks = zip(*train_paths)
     val_imgs, val_masks     = zip(*val_paths)
