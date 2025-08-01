@@ -1,5 +1,6 @@
 import os
 from glob import glob
+import argparse
 
 import torch
 import torchvision
@@ -30,6 +31,10 @@ ENCODER = "resnet152"
 WEIGHTS = "imagenet"
 EPOCHS = 50
 BEAN_DATASET = ""
+
+def get_args():
+    parser = argparse.ArgumentParser()
+    return parser
 
 def get_dataloader(dataset, batch_size, num_workers):
     train_loader = None
@@ -95,15 +100,11 @@ def get_dataloader(dataset, batch_size, num_workers):
         val_imgs, val_masks = zip(*val_paths)
         train_ds = PlantDreamerAllBean(train_imgs, train_masks, transforms=train_aug)
         val_ds = PlantDreamerAllBean(val_imgs, val_masks, transforms=val_aug)
-        train_sampler = torch.utils.data.distributed.DistributedSampler(train_ds)
-        val_sampler = torch.utils.data.distributed.DistributedSampler(val_ds)
         train_loader = DataLoader(
             train_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers,
-            sampler=train_sampler
         )
         val_loader = DataLoader(
             val_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers,
-            sampler=val_sampler
         )
     else:
         raise Exception("invalid dataset")
@@ -126,7 +127,7 @@ def main():
     print("Using", torch.cuda.device_count(), "GPUs")
     print("Model device:", next(model.parameters()).device)
 
-    train_loader, val_loader = get_dataloader("all", 4, 2)
+    train_loader, val_loader = get_dataloader("all", 16, 3)
     optimiser = torch.optim.Adam(model.parameters(), lr=1e-4)
     # loss_fn = nn.CrossEntropyLoss(ignore_index=255, reduction='mean')
     loss_fn = smp_losses.DiceLoss(mode="multiclass")
