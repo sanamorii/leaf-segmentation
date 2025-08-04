@@ -3,7 +3,6 @@ import torchvision
 import torch.nn as nn
 import torch.optim as optim
 from torch.optim import Optimizer
-from torch.optim.lr_scheduler import 
 from torch.utils.data import Dataset
 from torchvision import transforms
 from torch.utils.data import DataLoader
@@ -25,7 +24,7 @@ import sys
 import cv2
 
 from dataset.bean import rgb_to_class
-from loss.earlystop import EarlyStop, STATUS
+from loss.earlystop import EarlyStop
 from utils import overlay, save_ckpt
 from metrics import StreamSegMetrics
 
@@ -129,8 +128,8 @@ def train_fn(
 
         for imgs, masks in train_bar:
             cur_itrs += 1
-            imgs = imgs.to(device, type=torch.float32, non_blocking=True)
-            masks = masks.to(device, type=torch.long, non_blocking=True)
+            imgs = imgs.to(device, non_blocking=True)
+            masks = masks.to(device, non_blocking=True)
 
             optimiser.zero_grad()
             outputs = model(imgs)

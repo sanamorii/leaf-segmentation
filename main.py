@@ -49,8 +49,8 @@ def get_args():
     return parser
 
 
-def get_dataloader(args):
-    if args.dataset == "bean01":
+def get_dataloader(dataset, batch_size, num_workers, pin_memory=False, shuffle=True):
+    if dataset == "bean01":
 
         train_aug = A.Compose(
             [
@@ -79,7 +79,7 @@ def get_dataloader(args):
             mask_dir="./data/beans/bean1/mask",
             transforms=val_aug,
         )
-    if args.dataset == "all":
+    if dataset == "all":
 
         train_aug = A.Compose(
             [
@@ -114,17 +114,17 @@ def get_dataloader(args):
         raise Exception("invalid dataset")
     train_loader = DataLoader(
         train_ds,
-        batch_size=args.batch_size,
-        shuffle=args.shuffle,
-        num_workers=args.num_workers,
-        pin_memory=args.pin_memory,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
     )
     val_loader = DataLoader(
         val_ds,
-        batch_size=args.batch_size,
-        shuffle=args.shuffle,
-        num_workers=args.num_workers,
-        pin_memory=args.pin_memory,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
     )
     return train_loader, val_loader
 
@@ -159,12 +159,11 @@ def main():
     print("Model device:", next(model.parameters()).device)
     print("Training model:", model.module.name)
 
-    train_loader, val_loader = get_dataloader(
-        "all",
-        batch_size=opts.batch_size,
-        num_workers=opts.num_workers,
-        pin_memory=opts.pin_memory,
-    )
+    train_loader, val_loader = get_dataloader(dataset=opts.dataset, 
+                                              batch_size=opts.batch_size,
+                                              num_workers=opts.num_workers,
+                                              pin_memory=opts.pin_memory,
+                                              shuffle=opts.shuffle)
     optimiser = torch.optim.AdamW(
         model.parameters(), lr=opts.learning_rate, weight_decay=opts.weight_decay
     )
