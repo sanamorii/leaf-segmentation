@@ -151,6 +151,10 @@ def get_lossfn():
 
 def main():
     opts = get_args().parse_args()
+    print(f"-"*50)
+    print(f"encoder: {opts.encoder}")
+    print(f"weights: {opts.weights if opts.weights != None else "transfer learning not used"}")
+    print(f"epochs: {opts.epochs}")
 
     unetplusplus = smp.UnetPlusPlus(
         encoder_name=opts.encoder,
