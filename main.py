@@ -157,7 +157,7 @@ def main():
         encoder_weights=opts.weights,
         encoder_depth=5,
         in_channels=3,
-        decoder_channels=[128, 64, 32, 16, 8]  # [256, 128, 64, 32, 16]
+        decoder_channels=[128, 64, 32, 16, 8],  # [256, 128, 64, 32, 16]
         decoder_attention_type="scse",
         classes=len(COLOR_TO_CLASS),
     )

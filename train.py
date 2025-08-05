@@ -81,9 +81,10 @@ def validate(
 def train(model, loader: DataLoader, optimiser, loss_fn, device, epoch: tuple[int, int]):
     running_loss = 0
     last_loss = 0
+    itrs = 0
 
     for i, (imgs, masks) in enumerate((loader)):
-        cur_itrs += 1
+        itrs += 1
         imgs = imgs.to(device, type=torch.float32, non_blocking=True)
         masks = masks.to(device, type=torch.long, non_blocking=True)
 
@@ -155,10 +156,7 @@ def train_fn(
         scheduler.step(avg_vloss, epoch=epoch)
 
         print(
-            f"Epoch {epoch+1}/{epochs} - Loss, {interval_loss:.4f}, \
-                Avg Train Loss: {avg_tloss:.4f}, \
-                Avg Val Loss: {avg_vloss:.4f}, \
-                "
+            f"Epoch {epoch+1}/{epochs} - Avg Train Loss: {avg_tloss:.4f}, Avg Val Loss: {avg_vloss:.4f}, Mean IoU: {val_score['Mean IoU']:.4f}"
         )
 
         # save model
