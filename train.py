@@ -70,7 +70,7 @@ def validate(
             targets = mask.cpu().numpy()
 
             # update metrics and validation loss
-            loss = loss_fn(preds, mask)
+            loss = loss_fn(output, mask)  # 
             running_vloss += loss.item()
             metrics.update(targets, preds)
 
