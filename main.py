@@ -87,9 +87,13 @@ def get_dataloader(dataset, batch_size, num_workers, pin_memory=False, shuffle=T
                 A.VerticalFlip(p=0.5),
                 A.RandomRotate90(p=0.5),
                 A.RandomBrightnessContrast(p=0.4),
-                A.ElasticTransform(p=0.2, alpha=120, sigma=120 * 0.05),
+
+                # A.ElasticTransform(p=0.2, alpha=120, sigma=120 * 0.05),
                 A.GaussianBlur(p=0.2),
-                A.RandomCrop(width=256, height=256, p=1.0),
+                A.GaussNoise(p=0.3),
+                # A.RandomCrop(width=256, height=256, p=1.0), # potentially skipping important features
+                A.HueSaturationValue(p=0.4),
+                A.Cutout(num_holes=8, max_h_size=16, max_w_size=16, p=0.5),
                 A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
                 ToTensorV2(),
             ]
@@ -112,6 +116,11 @@ def get_dataloader(dataset, batch_size, num_workers, pin_memory=False, shuffle=T
         val_ds = PlantDreamerAllBean(val_imgs, val_masks, transforms=val_aug)
     else:
         raise Exception("invalid dataset")
+    
+    print("Training dataset size: ", len(train_ds))
+    print("Validation dataset size: ", len(val_ds))
+    print("Dataset type: ", dataset)
+
     train_loader = DataLoader(
         train_ds,
         batch_size=batch_size,
@@ -148,6 +157,7 @@ def main():
         encoder_weights=opts.weights,
         encoder_depth=5,
         in_channels=3,
+        decoder_channels=[128, 64, 32, 16, 8]  # [256, 128, 64, 32, 16]
         decoder_attention_type="scse",
         classes=len(COLOR_TO_CLASS),
     )
@@ -164,9 +174,14 @@ def main():
                                               num_workers=opts.num_workers,
                                               pin_memory=opts.pin_memory,
                                               shuffle=opts.shuffle)
-    optimiser = torch.optim.AdamW(
-        model.parameters(), lr=opts.learning_rate, weight_decay=opts.weight_decay
-    )
+    # optimiser = torch.optim.AdamW(
+    #     model.parameters(), lr=opts.learning_rate, weight_decay=opts.weight_decay
+    # )
+
+    optimiser = torch.optim.SGD(params=[
+        {'params': model.backbone.parameters(), 'lr': 0.1 * opts.learning_rate},
+        {'params': model.classifier.parameters(), 'lr': opts.learning_rate},
+    ], lr=opts.lr, momentum=0.9, weight_decay=opts.weight_decay)
 
     loss_fn = CEDiceLoss(ce_weight=0.5, dice_weight=0.5)
     
