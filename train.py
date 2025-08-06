@@ -6,7 +6,6 @@ from torch.optim import Optimizer
 from torch.utils.data import Dataset
 from torchvision import transforms
 from torch.utils.data import DataLoader
-from torch.cuda.amp import GradScaler, autocast
 from PIL import Image
 from tqdm import tqdm
 
@@ -29,7 +28,9 @@ from utils import overlay, save_ckpt
 from metrics import StreamSegMetrics
 
 
-def create_checkpoint(cur_itrs: int, model, optimiser: Optimizer, scheduler, tloss, vloss, vscore):
+def create_checkpoint(
+    cur_itrs: int, model, optimiser: Optimizer, scheduler, tloss, vloss, vscore
+):
     return {
         "cur_itrs": cur_itrs,
         "model_state": model.module.state_dict(),
@@ -49,13 +50,13 @@ def validate(
     model: SegmentationModel,
     loader: DataLoader,
     metrics: StreamSegMetrics,
-    epoch: tuple[int, int],
     loss_fn,
     device: str,
+    epochs: tuple[int, int],
 ):
     model.eval()
     metrics.reset()
-    val_bar = tqdm(loader, desc=f"Epoch {epoch[0]+1}/{epoch[1]} [Val]", leave=False)
+    val_bar = tqdm(loader, desc=f"Epoch {epochs[0]+1}/{epochs[1]} [Val]", leave=False)
     running_vloss = 0
 
     with torch.no_grad():
@@ -70,90 +71,113 @@ def validate(
             targets = mask.cpu().numpy()
 
             # update metrics and validation loss
-            loss = loss_fn(output, mask)  # 
+            loss = loss_fn(preds, mask)
             running_vloss += loss.item()
             metrics.update(targets, preds)
+            val_bar.set_postfix(loss=loss.item())
 
         score = metrics.get_results()
     avg_val_loss = running_vloss / len(loader)
     return score, avg_val_loss
 
-def train(model, loader: DataLoader, optimiser, loss_fn, device, epoch: tuple[int, int]):
+
+def train(
+    model: SegmentationModel,
+    loss_fn,
+    optimiser: Optimizer,
+    scaler: torch.cuda.amp.GradScaler,
+    loader: DataLoader,
+    device: str,
+    epochs: tuple[int, int],
+    use_amp: bool = False,           # mixed precision vs default precision (FP16)
+    gradient_clipping: float = 1.0,  # prevent exploding gradients
+):
+    model.train()
     running_loss = 0
-    last_loss = 0
-    itrs = 0
 
-    for i, (imgs, masks) in enumerate((loader)):
+    train_bar = tqdm(
+        loader, desc=f"Epoch {epochs[0]+1}/{epochs[1]} [Train]", leave=False
+    )
+
+    for imgs, masks in train_bar:
+        imgs = imgs.to(device, non_blocking=True)
+        masks = masks.to(device, non_blocking=True)
+
+
+        optimiser.zero_grad(set_to_none=True)
+        if use_amp:
+            with torch.amp.autocast(device_type=device, enabled=use_amp):
+                outputs = model(imgs)
+                loss = loss_fn(outputs, masks)
+
+            scaler.scale(loss).backward()
+            scaler.unscale_(optimiser)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), gradient_clipping)
+            loss.backward()
+            optimiser.step()
+        else:
+            outputs = model(imgs)
+            loss = loss_fn(outputs, masks)
+            
+            loss.backward()
+            optimiser.step()
+
+        loss_item = loss.item()
+        running_loss += loss_item
+        train_bar.set_postfix(loss=loss_item)
         itrs += 1
-        imgs = imgs.to(device, type=torch.float32, non_blocking=True)
-        masks = masks.to(device, type=torch.long, non_blocking=True)
 
-        optimiser.zero_grad()
-        outputs = model(imgs)
-        loss = loss_fn(outputs, masks)
-        loss.backward()
-        optimiser.step()
-
-        np_loss = loss.detach().cpu().numpy()
-        running_loss += np_loss
+    avg_loss = running_loss / len(loader)
+    return avg_loss
 
 
 def train_fn(
-    model,
+    model : SegmentationModel,
     loss_fn,
     optimiser,
     scheduler,
     train_loader: DataLoader,
     val_loader: DataLoader,
-    epochs,
+    epochs : int,
     device,
-    num_classes,
+    num_classes : int,
+    use_amp: bool = False,
     visualise: bool = False,
 ):
 
     best_vloss = np.inf
     best_score = 0.0
     cur_itrs = 0
-    interval_loss = 0
 
-    stop_policy = EarlyStop(patience=10, min_delta=0.001) # early stopping policy
+    grad_scaler = torch.amp.GradScaler(device, enabled=use_amp)
+    stop_policy = EarlyStop(patience=10, min_delta=0.001)  # early stopping policy
     metrics = StreamSegMetrics(num_classes)
 
     for epoch in range(epochs):
-        model.train()
-        running_loss = 0
 
-        train_bar = tqdm(
-            train_loader, desc=f"Epoch {epoch+1}/{epochs} [Train]", leave=False
+        avg_tloss = train(
+            model=model,
+            loss_fn=loss_fn,
+            optimiser=optimiser,
+            scaler=grad_scaler,
+            loader=train_loader,
+            device=device,
+            epochs=(epoch, epochs),
+            use_amp=use_amp
         )
 
-        for imgs, masks in train_bar:
-            cur_itrs += 1
-            imgs = imgs.to(device, non_blocking=True)
-            masks = masks.to(device, non_blocking=True)
+        cur_itrs += len(train_loader)
 
-            optimiser.zero_grad()
-            outputs = model(imgs)
-            loss = loss_fn(outputs, masks)
-            loss.backward()
-            optimiser.step()
-
-            np_loss = loss.detach().cpu().numpy()
-            interval_loss += np_loss
-            running_loss += loss.item()
-            train_bar.set_postfix(loss=loss.item())
-
-        avg_tloss = running_loss / len(train_loader)
         val_score, avg_vloss = validate(
             model=model,
             loader=val_loader,
             metrics=metrics,
-            epoch=(epoch, epochs),
+            epochs=(epoch, epochs),
             loss_fn=loss_fn,
             device=device,
         )
 
-        scheduler.step(avg_vloss, epoch=epoch)
+        scheduler.step(avg_vloss)  # epoch param is deprecated
 
         print(
             f"Epoch {epoch+1}/{epochs} - Avg Train Loss: {avg_tloss:.4f}, Avg Val Loss: {avg_vloss:.4f}, Mean IoU: {val_score['Mean IoU']:.4f}"

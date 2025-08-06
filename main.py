@@ -21,12 +21,13 @@ from torchmetrics.classification import (
 )
 import segmentation_models_pytorch as smp
 import segmentation_models_pytorch.losses as smp_losses
-from sklearn.model_selection import train_test_split
 
+from loss.poly import PolyLR
 from train import train_fn
-from dataset.bean import PlantDreamerAllBean, PlantDreamerBean, COLOR_TO_CLASS
+from dataset.bean import COLOR_TO_CLASS
 from utils import collect_all_data
 from loss.cedice import CEDiceLoss
+from dataset.utils import get_dataloader
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -46,96 +47,9 @@ def get_args():
     parser.add_argument("--batch_size", type=int, default=4)
     parser.add_argument("--pin_memory", type=bool, default=True)
     parser.add_argument("--shuffle", type=bool, default=True)
+
+    parser.add_argument("--shuffle", type=bool, default=True)
     return parser
-
-
-def get_dataloader(dataset, batch_size, num_workers, pin_memory=False, shuffle=True):
-    if dataset == "bean01":
-
-        train_aug = A.Compose(
-            [
-                A.Resize(256, 256),
-                A.HorizontalFlip(p=0.5),
-                A.RandomBrightnessContrast(p=0.2),
-                A.Normalize(),
-                ToTensorV2(),
-            ]
-        )
-        val_aug = A.Compose(
-            [
-                A.Resize(256, 256),
-                A.Normalize(),
-                ToTensorV2(),
-            ]
-        )
-
-        train_ds = PlantDreamerBean(
-            image_dir="./data/beans/bean0/gt",
-            mask_dir="./data/beans/bean0/mask",
-            transforms=train_aug,
-        )
-        val_ds = PlantDreamerBean(
-            image_dir="./data/beans/bean1/gt",
-            mask_dir="./data/beans/bean1/mask",
-            transforms=val_aug,
-        )
-    if dataset == "all":
-
-        train_aug = A.Compose(
-            [
-                A.HorizontalFlip(p=0.5),
-                A.VerticalFlip(p=0.5),
-                A.RandomRotate90(p=0.5),
-                A.RandomBrightnessContrast(p=0.4),
-
-                # A.ElasticTransform(p=0.2, alpha=120, sigma=120 * 0.05),
-                A.GaussianBlur(p=0.2),
-                A.GaussNoise(p=0.3),
-                # A.RandomCrop(width=256, height=256, p=1.0), # potentially skipping important features
-                A.HueSaturationValue(p=0.4),
-                A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
-                ToTensorV2(),
-            ]
-        )
-        val_aug = A.Compose(
-            [
-                A.Resize(256, 256),
-                A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
-                ToTensorV2(),
-            ]
-        )
-
-        all_pairs = collect_all_data("./data/beans")
-        train_paths, val_paths = train_test_split(
-            all_pairs, test_size=0.2, random_state=42, shuffle=True
-        )
-        train_imgs, train_masks = zip(*train_paths)
-        val_imgs, val_masks = zip(*val_paths)
-        train_ds = PlantDreamerAllBean(train_imgs, train_masks, transforms=train_aug)
-        val_ds = PlantDreamerAllBean(val_imgs, val_masks, transforms=val_aug)
-    else:
-        raise Exception("invalid dataset")
-    
-    print("Training dataset size: ", len(train_ds))
-    print("Validation dataset size: ", len(val_ds))
-    print("Dataset type: ", dataset)
-
-    train_loader = DataLoader(
-        train_ds,
-        batch_size=batch_size,
-        shuffle=shuffle,
-        num_workers=num_workers,
-        pin_memory=pin_memory,
-    )
-    val_loader = DataLoader(
-        val_ds,
-        batch_size=batch_size,
-        shuffle=shuffle,
-        num_workers=num_workers,
-        pin_memory=pin_memory,
-    )
-    return train_loader, val_loader
-
 
 def get_optimiser(optim, model, lr, **opts) -> torch.optim.Optimizer:
     if optim == "adam":
@@ -207,6 +121,8 @@ def main():
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimiser, mode="min", patience=3, factor=0.5
     )
+
+    # scheduler = PolyLR(optimizer=optimiser, max_iters=30e3, power=0.9)
 
     train_fn(
         model=model,
