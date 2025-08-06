@@ -6,9 +6,12 @@ import torch
 import torchvision
 import torch.nn as nn
 import torch.optim as optim
+import torch.multiprocessing as mp
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import CosineAnnealingLR, SequentialLR, LinearLR
 from torch.utils.data import Dataset
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
 
 from torchvision import transforms
 from torch.utils.data import DataLoader
@@ -57,17 +60,47 @@ def get_optimiser(optim, model, lr, **opts) -> torch.optim.Optimizer:
     elif optim == "adamw":
         return torch.optim.AdamW(model.parameters(), lr=lr, **opts)
 
+def get_policy(policy, optimiser, opts):
+    
+    if policy == "plateau":
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimiser, mode="min", patience=3, factor=0.5
+        )
+    elif policy == "step":
+        scheduler = torch.optim.lr_scheduler.StepLR(
+            optimiser, step_size=10000, gamma=0.1
+        )
+    elif policy == "warmupcosine":
+        warmup = torch.optim.lr_scheduler.LinearLR(
+            optimiser, start_factor=0.1, total_iters=5
+        )
+        cosine = CosineAnnealingLR(optimiser, T_max=opts.epochs - 5)
+        scheduler = torch.optim.lr_scheduler.SequentialLR(
+            optimiser, schedulers=[warmup, cosine]
+        )
+
+    return scheduler
 
 def get_lossfn():
     return
 
+def setup_ddp(rank, world_size):
+    dist.init_process_group(backend="nccl", init_method="env://", rank=rank, world_size=world_size)
+    torch.cuda.set_device(rank)
 
-def main():
+def cleanup_ddp():
+    dist.destroy_process_group()
+
+
+def main(rank, world_size):
     opts = get_args().parse_args()
     print(f"-"*50)
     print(f"encoder: {opts.encoder}")
     print(f"weights: {opts.weights}")
     print(f"epochs: {opts.epochs}")
+
+    setup_ddp(rank, world_size)
+    device = f"cuda:{rank}"
 
     model = smp.UnetPlusPlus(
         encoder_name=opts.encoder,
@@ -78,7 +111,8 @@ def main():
         decoder_attention_type="scse",
         classes=len(COLOR_TO_CLASS),
     )
-    model.to(DEVICE)
+    model.to(device)
+    model = DDP(model, device_ids=[rank], find_unused_parameters=False)
 
     print("GPUs:", torch.cuda.device_count())
     print("Using", torch.cuda.device_count(), "GPUs")
@@ -100,23 +134,7 @@ def main():
     ], lr=opts.learning_rate, momentum=0.9, weight_decay=opts.weight_decay)
 
     loss_fn = CEDiceLoss(ce_weight=0.5, dice_weight=0.5)
-    
-    # if opts.policy == "plateau":
-    #     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-    #         optimiser, mode="min", patience=3, factor=0.5
-    #     )
-    # elif opts.policy == "step":
-    #     scheduler = torch.optim.lr_scheduler.StepLR(
-    #         optimiser, step_size=10000, gamma=0.1
-    #     )
-    # elif opts.policy == "warmupcosine":
-    #     warmup = torch.optim.lr_scheduler.LinearLR(
-    #         optimiser, start_factor=0.1, total_iters=5
-    #     )
-    #     cosine = CosineAnnealingLR(optimiser, T_max=opts.epochs - 5)
-    #     scheduler = torch.optim.lr_scheduler.SequentialLR(
-    #         optimiser, schedulers=[warmup, cosine]
-    #     )
+
 
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimiser, mode="min", patience=3, factor=0.5
@@ -132,11 +150,15 @@ def main():
         train_loader=train_loader,
         val_loader=val_loader,
         epochs=opts.epochs,
-        device=DEVICE,
+        device=device,
+        rank=rank,
         num_classes=len(COLOR_TO_CLASS),
         visualise=False,
     )
 
+    cleanup_ddp()
+
 
 if __name__ == "__main__":
-    main()
+    world_size = torch.cuda.device_count()
+    mp.spawn(main, args=(world_size,), nprocs=world_size, join=True)

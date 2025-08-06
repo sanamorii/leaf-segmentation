@@ -1,4 +1,5 @@
 import numpy as np
+import torch
 
 class StreamSegMetrics:
     def __init__(self, n_classes):
@@ -56,3 +57,15 @@ class StreamSegMetrics:
         
     def reset(self):
         self.confusion_matrix = np.zeros((self.n_classes, self.n_classes))
+
+    def sync_ddp(self):
+        """Synchronize the confusion matrix across all DDP processes. Because"""
+        if not torch.distributed.is_available() or not torch.distributed.is_initialized():
+            return
+
+        # convert to torch tensor
+        # all-reduce across all processes
+        # put it back into numpy
+        cm_tensor = torch.tensor(self.confusion_matrix).to(torch.float64).cuda()
+        torch.distributed.all_reduce(cm_tensor, op=torch.distributed.ReduceOp.SUM)
+        self.confusion_matrix = cm_tensor.cpu().numpy()

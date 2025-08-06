@@ -6,6 +6,7 @@ from torch.optim import Optimizer
 from torch.utils.data import Dataset
 from torchvision import transforms
 from torch.utils.data import DataLoader
+from torch.utils.data.distributed import DistributedSampler
 from PIL import Image
 from tqdm import tqdm
 
@@ -26,6 +27,19 @@ from dataset.bean import rgb_to_class
 from loss.earlystop import EarlyStop
 from utils import overlay, save_ckpt
 from metrics import StreamSegMetrics
+
+## i hate parallelism
+def rank0_tqdm(iterable, rank, *args, **kwargs):
+    """something tdqm"""
+    if rank == 0:
+        return tqdm(iterable, *args, **kwargs)
+    else:
+        return iterable
+    
+def rank0_print(rank, *args, **kwargs):
+    """print only from rank 0 GPU"""
+    if rank == 0:
+        print(*args, **kwargs)
 
 
 def create_checkpoint(
@@ -52,11 +66,12 @@ def validate(
     metrics: StreamSegMetrics,
     loss_fn,
     device: str,
+    rank: int,
     epochs: tuple[int, int],
 ):
     model.eval()
     metrics.reset()
-    val_bar = tqdm(loader, desc=f"Epoch {epochs[0]+1}/{epochs[1]} [Val]", leave=False)
+    val_bar = rank0_tqdm(loader, rank, desc=f"Epoch {epochs[0]+1}/{epochs[1]} [Val]", leave=False)
     running_vloss = 0
 
     with torch.no_grad():
@@ -71,11 +86,12 @@ def validate(
             targets = mask.cpu().numpy()
 
             # update metrics and validation loss
-            loss = loss_fn(preds, mask)
+            loss = loss_fn(output, mask)
             running_vloss += loss.item()
             metrics.update(targets, preds)
             val_bar.set_postfix(loss=loss.item())
 
+        metrics.sync_ddp()
         score = metrics.get_results()
     avg_val_loss = running_vloss / len(loader)
     return score, avg_val_loss
@@ -88,6 +104,7 @@ def train(
     scaler: torch.cuda.amp.GradScaler,
     loader: DataLoader,
     device: str,
+    rank: int,
     epochs: tuple[int, int],
     use_amp: bool = False,           # mixed precision vs default precision (FP16)
     gradient_clipping: float = 1.0,  # prevent exploding gradients
@@ -95,9 +112,11 @@ def train(
     model.train()
     running_loss = 0
 
-    train_bar = tqdm(
-        loader, desc=f"Epoch {epochs[0]+1}/{epochs[1]} [Train]", leave=False
+    train_bar = rank0_tqdm(
+        loader, rank, desc=f"Epoch {epochs[0]+1}/{epochs[1]} [Train]", leave=False
     )
+    if isinstance(loader.sampler, torch.DistributedSampler):
+        loader.sampler.set_epoch(epochs[0])
 
     for imgs, masks in train_bar:
         imgs = imgs.to(device, non_blocking=True)
@@ -113,8 +132,8 @@ def train(
             scaler.scale(loss).backward()
             scaler.unscale_(optimiser)
             torch.nn.utils.clip_grad_norm_(model.parameters(), gradient_clipping)
-            loss.backward()
-            optimiser.step()
+            scaler.step(optimiser)
+            scaler.update()
         else:
             outputs = model(imgs)
             loss = loss_fn(outputs, masks)
@@ -125,7 +144,6 @@ def train(
         loss_item = loss.item()
         running_loss += loss_item
         train_bar.set_postfix(loss=loss_item)
-        itrs += 1
 
     avg_loss = running_loss / len(loader)
     return avg_loss
@@ -139,7 +157,8 @@ def train_fn(
     train_loader: DataLoader,
     val_loader: DataLoader,
     epochs : int,
-    device,
+    device: int,
+    rank: int,
     num_classes : int,
     use_amp: bool = False,
     visualise: bool = False,
@@ -178,8 +197,7 @@ def train_fn(
         )
 
         scheduler.step(avg_vloss)  # epoch param is deprecated
-
-        print(
+        rank0_print(
             f"Epoch {epoch+1}/{epochs} - Avg Train Loss: {avg_tloss:.4f}, Avg Val Loss: {avg_vloss:.4f}, Mean IoU: {val_score['Mean IoU']:.4f}"
         )
 
@@ -194,16 +212,17 @@ def train_fn(
             vscore=val_score,
         )
 
-        if avg_vloss < best_vloss:
-            best_vloss = avg_vloss
-        if val_score["Mean IoU"] > best_score:
-            best_score = val_score["Mean IoU"]
-            save_ckpt(checkpoint, f"checkpoints/{model.module.name}_best.pth")
-        save_ckpt(checkpoint, f"checkpoints/{model.module.name}_current.pth")
+        if rank == 0:
+            if avg_vloss < best_vloss:
+                best_vloss = avg_vloss
+            if val_score["Mean IoU"] > best_score:
+                best_score = val_score["Mean IoU"]
+                save_ckpt(checkpoint, f"checkpoints/{model.name}_best.pth")
+            save_ckpt(checkpoint, f"checkpoints/{model.name}_current.pth")
 
         torch.cuda.empty_cache()  # clear cache
 
         stop_policy(avg_vloss, model)
         if stop_policy.early_stop:
-            print("No improvement in average validation loss - terminating.")
+            rank0_print("No improvement in average validation loss - terminating.")
             break
