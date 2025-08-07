@@ -40,8 +40,8 @@ def get_args():
 
     parser.add_argument("--epochs", type=int, default=50)
     # parser.add_argument("--total_itrs", type=int, default=-1)
-    parser.add_argument("--learning_rate", type=float, default=1e-4)
-    parser.add_argument("--weight_decay", type=float, default=1e-5)
+    parser.add_argument("--learning_rate", type=float, default=1e-5)
+    parser.add_argument("--weight_decay", type=float, default=1e-8)
 
     parser.add_argument("--num_workers", type=int, default=2)
     parser.add_argument("--batch_size", type=int, default=4)
@@ -93,10 +93,13 @@ def main():
     #     model.parameters(), lr=opts.learning_rate, weight_decay=opts.weight_decay
     # )
 
-    optimiser = torch.optim.SGD(params=[
-        {'params': model.encoder.parameters(), 'lr': 0.1 * opts.learning_rate},
-        {'params': model.segmentation_head.parameters(), 'lr': opts.learning_rate},
-    ], lr=opts.learning_rate, momentum=0.9, weight_decay=opts.weight_decay)
+    # optimiser = torch.optim.SGD(params=[
+    #     {'params': model.encoder.parameters(), 'lr': 0.1 * opts.learning_rate},
+    #     {'params': model.segmentation_head.parameters(), 'lr': opts.learning_rate},
+    # ], lr=opts.learning_rate, momentum=0.9, weight_decay=opts.weight_decay)
+
+    optimiser = optim.RMSprop(model.parameters(),
+                              lr=opts.learning_rate, weight_decay=opts.weight_decay, momentum=0.999, foreach=True)
 
     loss_fn = CEDiceLoss(ce_weight=0.5, dice_weight=0.5)
     
@@ -117,11 +120,11 @@ def main():
     #         optimiser, schedulers=[warmup, cosine]
     #     )
 
-    # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-    #     optimiser, mode="min", patience=3, factor=0.5
-    # )
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimiser, mode="min", patience=3, factor=0.5
+    )
 
-    scheduler = PolyLR(optimizer=optimiser, max_iters=30e3, power=0.9)
+    # scheduler = PolyLR(optimizer=optimiser, max_iters=30e3, power=0.9)
 
     train_fn(
         model=model,

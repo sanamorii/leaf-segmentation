@@ -37,15 +37,33 @@ from metrics import StreamSegMetrics
 from dataset.bean import PlantDreamerAllBean, PlantDreamerBean, COLOR_TO_CLASS, CLASS_COLORS
 from dataset.utils import collect_all_data, decode_mask, get_dataloader, overlay
 
-def preprocess_image(path, resize=(256,256)):
+def preprocess_image(path, resize=(256, 256)):
     image = Image.open(path).convert("RGB")
-    orig = np.array(image)
-    trfm = A.Compose([
-        A.Resize(resize),
-        A.ToTensorV2(),
-        A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    transform = transforms.Compose([
+        transforms.Resize(resize),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                             std=[0.229, 0.224, 0.225])
     ])
-    return orig, trfm(image).unsqueeze(0)
+    tensor = transform(image).unsqueeze(0)
+    mask_np = tensor.squeeze().cpu().numpy().astype(np.uint8)
+    orig = decode_mask(mask_np, CLASS_COLORS)
+
+    return orig, tensor
+
+def preprocess_mask(path, resize=(256, 256)):
+    mask = Image.open(path).convert("L")
+    orig = np.array(mask)
+    # mask = decode_mask(mask, COLOR_TO_CLASS)   # convert color to class index
+
+    trfm = A.Compose([
+        A.Resize(*resize)
+    ])
+
+    mask = trfm(image=mask)['image']
+    mask = torch.tensor(mask, dtype=torch.long).unsqueeze(0)  # [1, H, W]
+
+    return orig, mask
 
 def infer(model, image: torch.Tensor, device, threshold=0.5):
     """torch.nograd() and model.eval() need to be active"""
@@ -108,38 +126,40 @@ def eval_valset(model, dataloader, num_classes: int, device: str):
 
 
 def eval_images(model, dataset: str, num_classes, device, dir):
-    metrics = StreamSegMetrics(num_classes=num_classes)
     meaniou = MeanIoU(num_classes=num_classes, input_format='index').to(device)
     dice = DiceScore(num_classes=num_classes, average='macro', input_format='index').to(device)
     hausdorff = HausdorffDistance(num_classes=num_classes, distance_metric='euclidean', input_format='index').to(device)
 
     data = collect_all_data(dataset)
+    print(f"loaded {len(data)} evaluation images")
     model.eval()
     with torch.no_grad():
         for img, mask in data:
             basename = Path(img).stem
 
             img_orig, img_tensor = preprocess_image(img)
-            mask_orig, mask_tensor = preprocess_image(mask)
+            mask_tensor = preprocess_mask(mask)
 
             img_tensor, mask_tensor = img_tensor.to(device), mask_tensor.to(device)
             output = model(img_tensor)
-            pred = torch.argmax(output.squeeze(), dim=0)
+            pred = torch.argmax(output, dim=1)
 
             mask_pred = decode_mask(pred.cpu().numpy(), CLASS_COLORS)
 
             # metrics
-            metrics.update([mask_tensor.cpu().numpy()], [pred.cpu().numpy()])
-            meaniou.update(pred.unsqueeze(0), mask_tensor.unsqueeze(0))
-            dice.update(pred.unsqueeze(0), mask_tensor.unsqueeze(0))
-            hausdorff.update(pred.unsqueeze(0), mask_tensor.unsqueeze(0))
+            meaniou.update(pred, mask_tensor)
+            dice.update(pred, mask_tensor)
+            hausdorff.update(pred, mask_tensor)
 
             Image.fromarray(img_orig).save(os.path.join(dir, f"{basename}_gt.png"))
             Image.fromarray(mask_orig).save(os.path.join(dir, f"{basename}_mask.png"))
             Image.fromarray(mask_pred).save(os.path.join(dir, f"{basename}_pred.png"))
-    results = metrics.get_results() | {'meaniou': meaniou, 'dice': dice, 'hausdorff': hausdorff}
-    print(metrics.to_str(results))
-    return results
+
+    print(f"\nEvaluation Metrics:")
+    print(f"Mean IoU      : {meaniou.compute().item():.4f}")
+    print(f"Dice Coefficent : {dice.compute().item():.4f}")
+    print(f"Hausdorff Distance - Euclidean : {hausdorff.compute().item():.4f}")
+
 
 def get_args():
     return
@@ -160,7 +180,7 @@ def main():
 
     # infer_single(model, image=preprocess_image("data/real/gt/01.png"))
 
-    results = eval_images(model, "eval/images/", 4, "cuda", "results/")
+    eval_images(model, "data/eval", 4, "cuda", "results/")
 
 if __name__ == "__main__":
     main()
