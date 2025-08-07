@@ -24,7 +24,7 @@ import cv2
 
 from dataset.bean import rgb_to_class
 from loss.earlystop import EarlyStop
-from utils import overlay, save_ckpt
+from utils import save_ckpt
 from metrics import StreamSegMetrics
 
 
@@ -33,7 +33,7 @@ def create_checkpoint(
 ):
     return {
         "cur_itrs": cur_itrs,
-        "model_state": model.module.state_dict(),
+        "model_state": model.state_dict(),
         "optimizer_state": optimiser.state_dict(),
         "scheduler_state": scheduler.state_dict(),
         "validation_loss": vloss,
@@ -71,7 +71,7 @@ def validate(
             targets = mask.cpu().numpy()
 
             # update metrics and validation loss
-            loss = loss_fn(preds, mask)
+            loss = loss_fn(output, mask)
             running_vloss += loss.item()
             metrics.update(targets, preds)
             val_bar.set_postfix(loss=loss.item())
@@ -106,15 +106,15 @@ def train(
 
         optimiser.zero_grad(set_to_none=True)
         if use_amp:
-            with torch.amp.autocast(device_type=device, enabled=use_amp):
+            with torch.amp.autocast(device_type=device, enabled=True):
                 outputs = model(imgs)
                 loss = loss_fn(outputs, masks)
 
             scaler.scale(loss).backward()
             scaler.unscale_(optimiser)
             torch.nn.utils.clip_grad_norm_(model.parameters(), gradient_clipping)
-            loss.backward()
-            optimiser.step()
+            scaler.step(optimiser)
+            scaler.update()
         else:
             outputs = model(imgs)
             loss = loss_fn(outputs, masks)
@@ -125,7 +125,6 @@ def train(
         loss_item = loss.item()
         running_loss += loss_item
         train_bar.set_postfix(loss=loss_item)
-        itrs += 1
 
     avg_loss = running_loss / len(loader)
     return avg_loss
@@ -150,7 +149,7 @@ def train_fn(
     cur_itrs = 0
 
     grad_scaler = torch.amp.GradScaler(device, enabled=use_amp)
-    stop_policy = EarlyStop(patience=10, min_delta=0.001)  # early stopping policy
+    loss_stop_policy = EarlyStop(patience=10, min_delta=0.001)  # early stopping policy
     metrics = StreamSegMetrics(num_classes)
 
     for epoch in range(epochs):
@@ -198,12 +197,12 @@ def train_fn(
             best_vloss = avg_vloss
         if val_score["Mean IoU"] > best_score:
             best_score = val_score["Mean IoU"]
-            save_ckpt(checkpoint, f"checkpoints/{model.module.name}_best.pth")
-        save_ckpt(checkpoint, f"checkpoints/{model.module.name}_current.pth")
+            save_ckpt(checkpoint, f"checkpoints/{model.name}_{epochs}_best.pth")
+        save_ckpt(checkpoint, f"checkpoints/{model.name}_{epochs}_current.pth")
 
         torch.cuda.empty_cache()  # clear cache
 
-        stop_policy(avg_vloss, model)
-        if stop_policy.early_stop:
-            print("No improvement in average validation loss - terminating.")
+        loss_stop_policy(score["Mean IoU"], model)
+        if loss_stop_policy.early_stop:
+            print("No improvement in mean IoU - terminating.")
             break

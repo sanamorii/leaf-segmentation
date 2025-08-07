@@ -137,7 +137,9 @@ def eval_images(model, dataset: str, num_classes, device, dir):
             Image.fromarray(img_orig).save(os.path.join(dir, f"{basename}_gt.png"))
             Image.fromarray(mask_orig).save(os.path.join(dir, f"{basename}_mask.png"))
             Image.fromarray(mask_pred).save(os.path.join(dir, f"{basename}_pred.png"))
-    return metrics.get_results() | {'meaniou': meaniou, 'dice': dice, 'hausdorff': hausdorff}
+    results = metrics.get_results() | {'meaniou': meaniou, 'dice': dice, 'hausdorff': hausdorff}
+    print(metrics.to_str(results))
+    return results
 
 def get_args():
     return
@@ -145,18 +147,20 @@ def get_args():
 def main():
 
     model = smp.UnetPlusPlus(
-        encoder_name="resnet50",
+        encoder_name="resnet34",
         encoder_weights="imagenet",
         encoder_depth=5,
         in_channels=3,
         decoder_attention_type="scse",
         classes=len(COLOR_TO_CLASS),
     )
-    ckpt = torch.load("checkpoints/unetplusplus-resnet50_best.pth")
+    ckpt = torch.load("checkpoints1/unetplusplus-resnet34_best.pth", weights_only=False)
     model.load_state_dict(ckpt['model_state'])
     model.eval()
 
     # infer_single(model, image=preprocess_image("data/real/gt/01.png"))
 
+    results = eval_images(model, "eval/images/", 4, "cuda", "results/")
 
-    return
+if __name__ == "__main__":
+    main()

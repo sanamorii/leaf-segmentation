@@ -25,7 +25,7 @@ import segmentation_models_pytorch.losses as smp_losses
 from loss.poly import PolyLR
 from train import train_fn
 from dataset.bean import COLOR_TO_CLASS
-from utils import collect_all_data
+from dataset.utils import collect_all_data
 from loss.cedice import CEDiceLoss
 from dataset.utils import get_dataloader
 
@@ -48,7 +48,6 @@ def get_args():
     parser.add_argument("--pin_memory", type=bool, default=True)
     parser.add_argument("--shuffle", type=bool, default=True)
 
-    parser.add_argument("--shuffle", type=bool, default=True)
     return parser
 
 def get_optimiser(optim, model, lr, **opts) -> torch.optim.Optimizer:
@@ -118,11 +117,11 @@ def main():
     #         optimiser, schedulers=[warmup, cosine]
     #     )
 
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimiser, mode="min", patience=3, factor=0.5
-    )
+    # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+    #     optimiser, mode="min", patience=3, factor=0.5
+    # )
 
-    # scheduler = PolyLR(optimizer=optimiser, max_iters=30e3, power=0.9)
+    scheduler = PolyLR(optimizer=optimiser, max_iters=30e3, power=0.9)
 
     train_fn(
         model=model,
@@ -135,6 +134,7 @@ def main():
         device=DEVICE,
         num_classes=len(COLOR_TO_CLASS),
         visualise=False,
+        use_amp=True,
     )
 
 
