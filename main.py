@@ -23,6 +23,7 @@ import segmentation_models_pytorch as smp
 import segmentation_models_pytorch.losses as smp_losses
 
 from loss.poly import PolyLR
+from models.unetdropout import UNETDropout
 from train import train_fn
 from dataset.bean import COLOR_TO_CLASS
 from dataset.utils import collect_all_data
@@ -34,9 +35,30 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 def get_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset", type=str, default="all", help="training dataset", choices=["all", "bean", "kale"])
-    parser.add_argument("--encoder", type=str, default="resnet50", help="", choices=["resnet18", "resnet34", "resnet50", "resnet101", "resnet152"])
-    parser.add_argument("--weights", type=str, default=None, help="", choices=["imagenet"])
+    parser.add_argument(
+        "--model",
+        type=str,
+        default="unetplusplus",
+        help="model to use",
+        choices=["unet", "unetplusplus", "unetdropout", "fpn", "deeplabv3plus", "deeplabv3"]
+    )
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        default="all",
+        help="training dataset",
+        choices=["all", "bean", "kale"],
+    )
+    parser.add_argument(
+        "--encoder",
+        type=str,
+        default="resnet50",
+        help="",
+        choices=["resnet18", "resnet34", "resnet50", "resnet101", "resnet152"],
+    )
+    parser.add_argument(
+        "--weights", type=str, default=None, help="", choices=["imagenet"]
+    )
 
     parser.add_argument("--epochs", type=int, default=50)
     # parser.add_argument("--total_itrs", type=int, default=-1)
@@ -50,12 +72,94 @@ def get_args():
 
     return parser
 
-def get_optimiser(optim, model, lr, **opts) -> torch.optim.Optimizer:
-    if optim == "adam":
-        return torch.optim.Adam(model.parameters(), lr=lr, **opts)
-    elif optim == "adamw":
-        return torch.optim.AdamW(model.parameters(), lr=lr, **opts)
 
+def get_policy(policy, optimiser, opts):
+    if policy == "plateau":
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimiser, mode="min", patience=3, factor=0.5
+        )
+    elif policy == "step":
+        scheduler = torch.optim.lr_scheduler.StepLR(
+            optimiser, step_size=10000, gamma=0.1
+        )
+    elif policy == "warmupcosine":
+        warmup = torch.optim.lr_scheduler.LinearLR(
+            optimiser, start_factor=0.1, total_iters=5
+        )
+        cosine = CosineAnnealingLR(optimiser, T_max=opts.epochs - 5)
+        scheduler = torch.optim.lr_scheduler.SequentialLR(
+            optimiser, schedulers=[warmup, cosine]
+        )
+    elif policy == "poly":
+        scheduler = PolyLR(optimizer=optimiser, max_iters=30e3, power=0.9)
+    else:
+        raise Exception("invalid policy")
+    return scheduler
+
+
+def get_optimiser(name, model, opts):
+    if name == "adamw":
+        return torch.optim.AdamW(
+            model.parameters(), lr=opts.learning_rate, weight_decay=opts.weight_decay
+        )
+    if name == "sgd":
+        return torch.optim.SGD(
+            params=[
+                {"params": model.encoder.parameters(), "lr": 0.1 * opts.learning_rate},
+                {
+                    "params": model.segmentation_head.parameters(),
+                    "lr": opts.learning_rate,
+                },
+            ],
+            lr=opts.learning_rate,
+            momentum=0.9,
+            weight_decay=opts.weight_decay,
+        )
+    if name == "rmsprop":
+        return optim.RMSprop(
+            model.parameters(),
+            lr=opts.learning_rate,
+            weight_decay=opts.weight_decay,
+            momentum=0.999,
+            foreach=True,
+        )
+
+def get_model(name: str, opts):
+    if name == "unetplusplus":
+        return smp.UnetPlusPlus(
+            encoder_name=opts.encoder,
+            encoder_weights=opts.weights,
+            encoder_depth=5,
+            in_channels=3,
+            # decoder_channels=[128, 64, 32, 16, 8],  # [256, 128, 64, 32, 16]
+            decoder_attention_type="scse",
+            classes=len(COLOR_TO_CLASS),
+        )
+    elif name == "unet":
+        return smp.Unet(
+            encoder_name=opts.encoder,
+            encoder_weights=opts.weights,
+            encoder_depth=5,
+            in_channels=3,
+            # decoder_channels=[128, 64, 32, 16, 8],  # [256, 128, 64, 32, 16]
+            classes=len(COLOR_TO_CLASS),
+        )
+    elif name == "unetdropout":
+        return UNETDropout(
+            encoder_name=opts.encoder,
+            encoder_weights=opts.weights,
+            encoder_depth=5,
+            in_channels=3,
+            num_classes=len(COLOR_TO_CLASS),
+        )
+    elif name == "deeplabv3plus":
+        return smp.DeepLabV3Plus(
+            encoder_name=opts.encoder,
+            encoder_weights=opts.weights,
+            in_channels=3,
+            classes=len(COLOR_TO_CLASS),
+        )
+    
 
 def get_lossfn():
     return
@@ -63,20 +167,12 @@ def get_lossfn():
 
 def main():
     opts = get_args().parse_args()
-    print(f"-"*50)
+    print(f"-" * 50)
     print(f"encoder: {opts.encoder}")
     print(f"weights: {opts.weights}")
     print(f"epochs: {opts.epochs}")
 
-    model = smp.UnetPlusPlus(
-        encoder_name=opts.encoder,
-        encoder_weights=opts.weights,
-        encoder_depth=5,
-        in_channels=3,
-        # decoder_channels=[128, 64, 32, 16, 8],  # [256, 128, 64, 32, 16]
-        decoder_attention_type="scse",
-        classes=len(COLOR_TO_CLASS),
-    )
+    model = get_model(opts.model, opts)
     model.to(DEVICE)
 
     print("GPUs:", torch.cuda.device_count())
@@ -84,47 +180,25 @@ def main():
     print("Model device:", next(model.parameters()).device)
     print("Training model:", model.name)
 
-    train_loader, val_loader = get_dataloader(dataset=opts.dataset, 
-                                              batch_size=opts.batch_size,
-                                              num_workers=opts.num_workers,
-                                              pin_memory=opts.pin_memory,
-                                              shuffle=opts.shuffle)
-    # optimiser = torch.optim.AdamW(
-    #     model.parameters(), lr=opts.learning_rate, weight_decay=opts.weight_decay
-    # )
-
-    # optimiser = torch.optim.SGD(params=[
-    #     {'params': model.encoder.parameters(), 'lr': 0.1 * opts.learning_rate},
-    #     {'params': model.segmentation_head.parameters(), 'lr': opts.learning_rate},
-    # ], lr=opts.learning_rate, momentum=0.9, weight_decay=opts.weight_decay)
-
-    optimiser = optim.RMSprop(model.parameters(),
-                              lr=opts.learning_rate, weight_decay=opts.weight_decay, momentum=0.999, foreach=True)
-
+    train_loader, val_loader = get_dataloader(
+        dataset=opts.dataset,
+        batch_size=opts.batch_size,
+        num_workers=opts.num_workers,
+        pin_memory=opts.pin_memory,
+        shuffle=opts.shuffle,
+    )
+    optimiser = optim.RMSprop(
+        model.parameters(),
+        lr=opts.learning_rate,
+        weight_decay=opts.weight_decay,
+        momentum=0.999,
+        foreach=True,
+    )
     loss_fn = CEDiceLoss(ce_weight=0.5, dice_weight=0.5)
-    
-    # if opts.policy == "plateau":
-    #     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-    #         optimiser, mode="min", patience=3, factor=0.5
-    #     )
-    # elif opts.policy == "step":
-    #     scheduler = torch.optim.lr_scheduler.StepLR(
-    #         optimiser, step_size=10000, gamma=0.1
-    #     )
-    # elif opts.policy == "warmupcosine":
-    #     warmup = torch.optim.lr_scheduler.LinearLR(
-    #         optimiser, start_factor=0.1, total_iters=5
-    #     )
-    #     cosine = CosineAnnealingLR(optimiser, T_max=opts.epochs - 5)
-    #     scheduler = torch.optim.lr_scheduler.SequentialLR(
-    #         optimiser, schedulers=[warmup, cosine]
-    #     )
 
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimiser, mode="min", patience=3, factor=0.5
     )
-
-    # scheduler = PolyLR(optimizer=optimiser, max_iters=30e3, power=0.9)
 
     train_fn(
         model=model,

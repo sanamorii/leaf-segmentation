@@ -1,3 +1,4 @@
+import datetime
 import torch
 import torchvision
 import torch.nn as nn
@@ -77,8 +78,10 @@ def validate(
             val_bar.set_postfix(loss=loss.item())
 
         score = metrics.get_results()
+    
+    elapsed_time = val_bar.format_dict['elapsed']
     avg_val_loss = running_vloss / len(loader)
-    return score, avg_val_loss
+    return elapsed_time, score, avg_val_loss
 
 
 def train(
@@ -125,9 +128,10 @@ def train(
         loss_item = loss.item()
         running_loss += loss_item
         train_bar.set_postfix(loss=loss_item)
+    elapsed_time = train_bar.format_dict['elapsed']
 
     avg_loss = running_loss / len(loader)
-    return avg_loss
+    return elapsed_time, avg_loss
 
 
 def train_fn(
@@ -154,7 +158,7 @@ def train_fn(
 
     for epoch in range(epochs):
 
-        avg_tloss = train(
+        elapsed_ttime, avg_tloss = train(
             model=model,
             loss_fn=loss_fn,
             optimiser=optimiser,
@@ -167,7 +171,7 @@ def train_fn(
 
         cur_itrs += len(train_loader)
 
-        val_score, avg_vloss = validate(
+        elapsed_vtime, val_score, avg_vloss = validate(
             model=model,
             loader=val_loader,
             metrics=metrics,
@@ -181,6 +185,8 @@ def train_fn(
         print(
             f"Epoch {epoch+1}/{epochs} - Avg Train Loss: {avg_tloss:.4f}, Avg Val Loss: {avg_vloss:.4f}, Mean IoU: {val_score['Mean IoU']:.4f}"
         )
+        print(f"Training time: {str(datetime.timedelta(seconds=int(elapsed_ttime)))}, ", end="")
+        print(f"Validation time: {str(datetime.timedelta(seconds=int(elapsed_vtime)))}")
 
         # save model
         checkpoint = create_checkpoint(
