@@ -35,30 +35,10 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 def get_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--model",
-        type=str,
-        default="unetplusplus",
-        help="model to use",
-        choices=["unet", "unetplusplus", "unetdropout", "fpn", "deeplabv3plus", "deeplabv3"]
-    )
-    parser.add_argument(
-        "--dataset",
-        type=str,
-        default="all",
-        help="training dataset",
-        choices=["all", "bean", "kale"],
-    )
-    parser.add_argument(
-        "--encoder",
-        type=str,
-        default="resnet50",
-        help="",
-        choices=["resnet18", "resnet34", "resnet50", "resnet101", "resnet152"],
-    )
-    parser.add_argument(
-        "--weights", type=str, default=None, help="", choices=["imagenet"]
-    )
+    parser.add_argument("--model", type=str, required=True, help="model to use", choices=["unet", "unetplusplus", "unetdropout", "fpn", "deeplabv3plus", "deeplabv3"])
+    parser.add_argument("--dataset", type=str, default="all", help="training dataset", choices=["all", "bean", "kale"],)
+    parser.add_argument("--encoder", type=str, default="resnet50", help="", choices=["resnet18", "resnet34", "resnet50", "resnet101", "resnet152"],)
+    parser.add_argument("--weights", type=str, default=None, help="", choices=["imagenet"])
 
     parser.add_argument("--epochs", type=int, default=50)
     # parser.add_argument("--total_itrs", type=int, default=-1)
