@@ -102,21 +102,35 @@ def evaluate_folder(model, img_dir, mask_dir, save_dir, num_classes, device, res
     print(f"Dice Coefficient   : {dice.compute().item():.4f}")
     # print(f"Hausdorff Distance : {hausdorff.compute().item():.4f}")
 
-def get_model(ckpt_path, num_classes):
-    model = smp.UnetPlusPlus(
-        encoder_name="resnet34",
-        encoder_weights="imagenet",
-        classes=num_classes,
-        in_channels=3,
-        decoder_attention_type="scse"
-    )
-    checkpoint = torch.load(ckpt_path, map_location='cpu', weights_only=False)
-    model.load_state_dict(checkpoint['model_state'])
+def get_model(name, ckpt_path, num_classes):
+    if name == "unetplusplus":
+        model = smp.UnetPlusPlus(
+            encoder_name="resnet34",
+            encoder_weights="imagenet",
+            classes=num_classes,
+            in_channels=3,
+            decoder_attention_type="scse"
+        )
+        weights_only = False
+    elif name == "deeplabv3plus":
+        model = smp.DeepLabV3Plus(
+            encoder_name="resnet152",
+            encoder_weights="imagenet",
+            in_channels=3,
+            classes=len(COLOR_TO_CLASS),
+        )
+        weights_only = True
+    checkpoint = torch.load(ckpt_path, map_location='cpu', weights_only=weights_only)
+    if weights_only:
+        model.load_state_dict(checkpoint)
+    else:
+        model.load_state_dict(checkpoint['model_state'])
     return model
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Evaluate segmentation model on image folder")
+    parser.add_argument("--model", type=str, required=True, help="Name of model to use")
     parser.add_argument("--images", type=str, required=True, help="Path to folder containing input images")
     parser.add_argument("--masks", type=str, required=True, help="Path to folder containing ground truth masks")
     parser.add_argument("--checkpoint", type=str, required=True, help="Path to trained model checkpoint")
@@ -130,7 +144,7 @@ def main():
     args = parse_args()
 
     num_classes = len(COLOR_TO_CLASS)
-    model = get_model(args.checkpoint, num_classes)
+    model = get_model(args.model, args.checkpoint, num_classes)
     
     evaluate_folder(
         model=model,
