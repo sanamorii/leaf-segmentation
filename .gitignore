@@ -1,6 +1,10 @@
 checkpoints/
+checkpoints*/
 data/
 ref/
+slurm-*.out
+**/*.sh
+**/*.pth
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
