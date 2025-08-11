@@ -40,10 +40,14 @@ def get_args():
     parser.add_argument("--encoder", type=str, default="resnet50", help="", choices=["resnet18", "resnet34", "resnet50", "resnet101", "resnet152"],)
     parser.add_argument("--weights", type=str, default=None, help="", choices=["imagenet"])
 
+    parser.add_argument("--optimiser", type=str, default="rmsprop")
+    parser.add_argument("--policy", type=str, default="plateau")
+
     parser.add_argument("--epochs", type=int, default=50)
     # parser.add_argument("--total_itrs", type=int, default=-1)
     parser.add_argument("--learning_rate", type=float, default=1e-5)
     parser.add_argument("--weight_decay", type=float, default=1e-8)
+    parser.add_argument("--gradient_clip", type=float, default=1.0)
 
     parser.add_argument("--num_workers", type=int, default=2)
     parser.add_argument("--batch_size", type=int, default=4)
@@ -55,11 +59,11 @@ def get_args():
 
 def get_policy(policy, optimiser, opts):
     if policy == "plateau":
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        return torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimiser, mode="min", patience=3, factor=0.5
         )
     elif policy == "step":
-        scheduler = torch.optim.lr_scheduler.StepLR(
+        return torch.optim.lr_scheduler.StepLR(
             optimiser, step_size=10000, gamma=0.1
         )
     elif policy == "warmupcosine":
@@ -67,17 +71,20 @@ def get_policy(policy, optimiser, opts):
             optimiser, start_factor=0.1, total_iters=5
         )
         cosine = CosineAnnealingLR(optimiser, T_max=opts.epochs - 5)
-        scheduler = torch.optim.lr_scheduler.SequentialLR(
+        return torch.optim.lr_scheduler.SequentialLR(
             optimiser, schedulers=[warmup, cosine]
         )
     elif policy == "poly":
-        scheduler = PolyLR(optimizer=optimiser, max_iters=30e3, power=0.9)
+        return torch.optim.lr_scheduler.PolynomialLR(optimizer=optimiser, max_iters=30e3, power=0.9)
     else:
         raise Exception("invalid policy")
-    return scheduler
 
 
 def get_optimiser(name, model, opts):
+    if name == "adamw":
+        return torch.optim.Adam(
+            model.parameters(), lr=opts.learning_rate, weight_decay=opts.weight_decay
+        )
     if name == "adamw":
         return torch.optim.AdamW(
             model.parameters(), lr=opts.learning_rate, weight_decay=opts.weight_decay
@@ -85,7 +92,10 @@ def get_optimiser(name, model, opts):
     if name == "sgd":
         return torch.optim.SGD(
             params=[
-                {"params": model.encoder.parameters(), "lr": 0.1 * opts.learning_rate},
+                {
+                    "params": model.encoder.parameters(), 
+                    "lr": 0.1 * opts.learning_rate
+                },
                 {
                     "params": model.segmentation_head.parameters(),
                     "lr": opts.learning_rate,
@@ -139,6 +149,27 @@ def get_model(name: str, opts):
             in_channels=3,
             classes=len(COLOR_TO_CLASS),
         )
+    elif name == "deeplabv3":
+        return smp.DeepLabV3Plus(
+            encoder_name=opts.encoder,
+            encoder_weights=opts.weights,
+            in_channels=3,
+            classes=len(COLOR_TO_CLASS),
+        )
+    elif name == "deeplabv3plus":
+        return smp.DeepLabV3Plus(
+            encoder_name=opts.encoder,
+            encoder_weights=opts.weights,
+            in_channels=3,
+            classes=len(COLOR_TO_CLASS),
+        )
+    elif name == "segformer":
+        return smp.Segformer(
+            encoder_name=opts.encoder,
+            encoder_weights=opts.weights,
+            in_channels=3,
+            classes=len(COLOR_TO_CLASS)
+        )
     
 
 def get_lossfn():
@@ -158,7 +189,7 @@ def main():
     print("GPUs:", torch.cuda.device_count())
     print("Using", torch.cuda.device_count(), "GPUs")
     print("Model device:", next(model.parameters()).device)
-    print("Training model:", model.name)
+    print("Training model:", model.__class__.__name__)
 
     train_loader, val_loader = get_dataloader(
         dataset=opts.dataset,
@@ -167,18 +198,21 @@ def main():
         pin_memory=opts.pin_memory,
         shuffle=opts.shuffle,
     )
-    optimiser = optim.RMSprop(
-        model.parameters(),
-        lr=opts.learning_rate,
-        weight_decay=opts.weight_decay,
-        momentum=0.999,
-        foreach=True,
-    )
-    loss_fn = CEDiceLoss(ce_weight=0.5, dice_weight=0.5)
 
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimiser, mode="min", patience=3, factor=0.5
-    )
+    loss_fn = CEDiceLoss(ce_weight=0.5, dice_weight=0.5)
+    optimiser = get_optimiser(name=opts.optimiser, opts=opts)
+    scheduler = get_policy(policy=opts.policy, optimiser=optimiser, opts=opts)
+
+    # optimiser = optim.RMSprop(
+    #     model.parameters(),
+    #     lr=opts.learning_rate,
+    #     weight_decay=opts.weight_decay,
+    #     momentum=0.999,
+    #     foreach=True,
+    # )
+    # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+    #     optimiser, mode="min", patience=3, factor=0.5
+    # )
 
     train_fn(
         model=model,

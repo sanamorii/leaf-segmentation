@@ -145,6 +145,7 @@ def train_fn(
     device,
     num_classes : int,
     use_amp: bool = False,
+    gradient_clipping: float = 0.1,
     visualise: bool = False,
 ):
 
@@ -166,6 +167,7 @@ def train_fn(
             loader=train_loader,
             device=device,
             epochs=(epoch, epochs),
+            gradient_clipping=gradient_clipping,
             use_amp=use_amp
         )
 
