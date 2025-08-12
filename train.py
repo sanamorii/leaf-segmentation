@@ -25,29 +25,13 @@ import cv2
 
 from dataset.bean import rgb_to_class
 from loss.earlystop import EarlyStop
-from utils import save_ckpt
+from utils import create_ckpt, save_ckpt
 from metrics import StreamSegMetrics
 
 
-def create_checkpoint(
-    cur_itrs: int, model, optimiser: Optimizer, scheduler, tloss, vloss, vscore
-):
-    return {
-        "cur_itrs": cur_itrs,
-        "model_state": model.state_dict(),
-        "optimizer_state": optimiser.state_dict(),
-        "scheduler_state": scheduler.state_dict(),
-        "validation_loss": vloss,
-        "training_loss": tloss,
-        "overall_val_acc": vscore["Overall Acc"],
-        "mean_val_acc": vscore["Mean Acc"],
-        "freqw_val_acc": vscore["FreqW Acc"],
-        "mean_val_iou": vscore["Mean IoU"],
-        "class_val_iou": vscore["Class IoU"],
-    }
 
 
-def validate(
+def validate_epoch(
     model: SegmentationModel,
     loader: DataLoader,
     metrics: StreamSegMetrics,
@@ -84,7 +68,7 @@ def validate(
     return elapsed_time, score, avg_val_loss
 
 
-def train(
+def train_epoch(
     model: SegmentationModel,
     loss_fn,
     optimiser: Optimizer,
@@ -133,7 +117,6 @@ def train(
     avg_loss = running_loss / len(loader)
     return elapsed_time, avg_loss
 
-
 def train_fn(
     model : SegmentationModel,
     loss_fn,
@@ -159,7 +142,7 @@ def train_fn(
 
     for epoch in range(epochs):
 
-        elapsed_ttime, avg_tloss = train(
+        elapsed_ttime, avg_tloss = train_epoch(
             model=model,
             loss_fn=loss_fn,
             optimiser=optimiser,
@@ -173,7 +156,7 @@ def train_fn(
 
         cur_itrs += len(train_loader)
 
-        elapsed_vtime, val_score, avg_vloss = validate(
+        elapsed_vtime, val_score, avg_vloss = validate_epoch(
             model=model,
             loader=val_loader,
             metrics=metrics,
@@ -191,7 +174,7 @@ def train_fn(
         print(f"Validation time: {str(datetime.timedelta(seconds=int(elapsed_vtime)))}")
 
         # save model
-        checkpoint = create_checkpoint(
+        checkpoint = create_ckpt(
             cur_itrs=cur_itrs,
             model=model,
             optimiser=optimiser,
