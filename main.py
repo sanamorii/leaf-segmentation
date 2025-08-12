@@ -31,13 +31,13 @@ from loss.cedice import CEDiceLoss
 from dataset.utils import get_dataloader
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-
-
+MODEL_CHOICES = ["segformer", "unet", "unetplusplus", "unetdropout", "fpn", "deeplabv3plus", "deeplabv3"]
+ENCODER_CHOICES = ["mit_b0","mit_b1","mit_b2","mit_b3","mit_b4","mit_b5", "resnet18", "resnet34", "resnet50", "resnet101", "resnet152"]
 def get_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", type=str, required=True, help="model to use", choices=["unet", "unetplusplus", "unetdropout", "fpn", "deeplabv3plus", "deeplabv3"])
+    parser.add_argument("--model", type=str, required=True, help="model to use", choices=MODEL_CHOICES)
     parser.add_argument("--dataset", type=str, default="all", help="training dataset", choices=["all", "bean", "kale"],)
-    parser.add_argument("--encoder", type=str, default="resnet50", help="", choices=["resnet18", "resnet34", "resnet50", "resnet101", "resnet152"],)
+    parser.add_argument("--encoder", type=str, default="resnet50", help="", choices=ENCODER_CHOICES,)
     parser.add_argument("--weights", type=str, default=None, help="", choices=["imagenet"])
 
     parser.add_argument("--optimiser", type=str, default="rmsprop")
@@ -67,15 +67,18 @@ def get_policy(policy, optimiser, opts):
             optimiser, step_size=10000, gamma=0.1
         )
     elif policy == "warmupcosine":
+        warmup_epochs = max(1, int(0.05 * opts.epochs))
         warmup = torch.optim.lr_scheduler.LinearLR(
-            optimiser, start_factor=0.1, total_iters=5
+            optimiser, start_factor=0.1, total_iters=warmup_epochs
         )
-        cosine = CosineAnnealingLR(optimiser, T_max=opts.epochs - 5)
+        cosine = CosineAnnealingLR(optimiser, T_max=opts.epochs - warmup_epochs)
         return torch.optim.lr_scheduler.SequentialLR(
-            optimiser, schedulers=[warmup, cosine]
+            optimiser, schedulers=[warmup, cosine], milestones=[warmup_epochs],
         )
+    elif policy == "cosine":
+        return CosineAnnealingLR(optimiser, T_max=opts.epochs, eta_min=1e-4)
     elif policy == "poly":
-        return torch.optim.lr_scheduler.PolynomialLR(optimizer=optimiser, max_iters=30e3, power=0.9)
+        return torch.optim.lr_scheduler.PolynomialLR(optimizer=optimiser, total_iters=30e3, power=0.9)
     else:
         raise Exception("invalid policy")
 
@@ -178,10 +181,6 @@ def get_lossfn():
 
 def main():
     opts = get_args().parse_args()
-    print(f"-" * 50)
-    print(f"encoder: {opts.encoder}")
-    print(f"weights: {opts.weights}")
-    print(f"epochs: {opts.epochs}")
 
     model = get_model(opts.model, opts)
     model.to(DEVICE)
@@ -189,7 +188,15 @@ def main():
     print("GPUs:", torch.cuda.device_count())
     print("Using", torch.cuda.device_count(), "GPUs")
     print("Model device:", next(model.parameters()).device)
-    print("Training model:", model.__class__.__name__)
+
+    print("-" * 50)
+
+    print(f"Encoder: {opts.encoder}")
+    print(f"Weights: {opts.weights}")
+    print(f"Epochs: {opts.epochs}")
+    print("Training model:", model.name)
+    print(f"Optimiser (lr {opts.learning_rate}, wd {opts.weight_decay}): {opts.optimiser}")
+    print("Learning Rate Policy: ", opts.policy)
 
     train_loader, val_loader = get_dataloader(
         dataset=opts.dataset,
@@ -200,7 +207,7 @@ def main():
     )
 
     loss_fn = CEDiceLoss(ce_weight=0.5, dice_weight=0.5)
-    optimiser = get_optimiser(name=opts.optimiser, opts=opts)
+    optimiser = get_optimiser(name=opts.optimiser, opts=opts, model=model)
     scheduler = get_policy(policy=opts.policy, optimiser=optimiser, opts=opts)
 
     # optimiser = optim.RMSprop(
