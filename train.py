@@ -24,7 +24,7 @@ import sys
 import cv2
 
 from dataset.bean import rgb_to_class
-from loss.earlystop import EarlyStop
+from loss.earlystop import EarlyStopping
 from utils import create_ckpt, save_ckpt
 from metrics import StreamSegMetrics
 
@@ -137,7 +137,7 @@ def train_fn(
     cur_itrs = 0
 
     grad_scaler = torch.amp.GradScaler(device, enabled=use_amp)
-    loss_stop_policy = EarlyStop(patience=10, min_delta=0.001)  # early stopping policy
+    loss_stop_policy = EarlyStopping(patience=10, delta=0.001)  # early stopping policy
     metrics = StreamSegMetrics(num_classes)
 
     for epoch in range(epochs):

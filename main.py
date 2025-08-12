@@ -518,6 +518,7 @@ def get_lossfn():
 
 
 def objective(trial):
+    print("TUNING")
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     epochs = 5
 
@@ -528,7 +529,7 @@ def objective(trial):
     # Optimizer & Scheduler from Optuna
     optimiser = get_objective_optimiser(trial, model)
     scheduler = get_objective_policy(trial, optimiser, epochs)
-    criterion = smp.losses.DiceLoss(smooth=1.0)
+    criterion = smp.losses.DiceLoss(smooth=1.0, mode='multiclass')
 
     # Data
     train_loader, val_loader = get_dataloader(
@@ -544,7 +545,7 @@ def objective(trial):
     cur_itrs = 0
 
     grad_scaler = torch.amp.GradScaler(device, enabled=True)
-    loss_stop_policy = EarlyStopping(patience=10, min_delta=0.001)  # early stopping policy
+    loss_stop_policy = EarlyStopping(patience=10, delta=0.001)  # early stopping policy
     metrics = StreamSegMetrics(len(COLOR_TO_CLASS))
 
     for epoch in range(epochs):
@@ -601,7 +602,7 @@ def objective(trial):
             save_ckpt(checkpoint, f"checkpoints/{model.name}_{epochs}_best.pth")
         save_ckpt(checkpoint, f"checkpoints/{model.name}_{epochs}_current.pth")
 
-        trial.report(avg_vloss.item(), epoch)
+        trial.report(avg_vloss, epoch)
         if trial.should_prune():
             raise optuna.exceptions.TrialPruned()
 

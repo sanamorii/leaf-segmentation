@@ -14,7 +14,7 @@ class EarlyStopping:
         self.delta = delta
         self.trace_func = trace_func
 
-    def __call__(self, val_loss, model):
+    def __call__(self, val_loss):
         # Check if validation loss is nan
         if np.isnan(val_loss):
             self.trace_func("Validation loss is NaN. Ignoring this epoch.")
