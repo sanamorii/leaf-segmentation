@@ -193,7 +193,7 @@ def train_fn(
 
         torch.cuda.empty_cache()  # clear cache
 
-        loss_stop_policy(val_score["Mean IoU"])
+        loss_stop_policy(best_vloss)
         if loss_stop_policy.early_stop:
-            print("No improvement in mean IoU - terminating.")
+            print("No improvement - terminating.")
             break
