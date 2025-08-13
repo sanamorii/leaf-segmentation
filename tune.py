@@ -223,11 +223,11 @@ def get_objective_optimiser(trial, model):
 
     elif optimiser_name == "Rprop":
         etas = (
-            trial.suggest_float(prefix + "eta_min", 1.001, 1.2),
-            trial.suggest_float(prefix + "eta_max", 1.2, 2.0),
+            trial.suggest_float(prefix + "eta_min", 0.1, 0.99),
+            trial.suggest_float(prefix + "eta_max", 1.01, 2.0),
         )
         step_sizes = (
-            trial.suggest_float(prefix + "step_size_min", 1e-6, 1e-3, log=True),
+            trial.suggest_float(prefix + "step_size_min", 1e-6, 1e-2, log=True),
             trial.suggest_float(prefix + "step_size_max", 0.1, 1.0, log=True),
         )
         return optim.Rprop(params, lr=lr, etas=etas, step_sizes=step_sizes)
