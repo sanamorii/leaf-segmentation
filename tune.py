@@ -91,14 +91,14 @@ def get_objective_optimiser(optimiser, trial, model):
 
     params = model.parameters()
 
-    if optimiser == "Adadelta":
+    if optimiser.lower() == "adadelta":
         rho = trial.suggest_float(prefix + "rho", 0.8, 0.999)
         eps = trial.suggest_float(prefix + "eps", 1e-8, 1e-5, log=True)
         return optim.Adadelta(
             params, lr=lr, rho=rho, eps=eps, weight_decay=weight_decay
         )
 
-    elif optimiser == "Adagrad":
+    elif optimiser.lower() == "adagrad":
         initial_accumulator_value = trial.suggest_float(
             prefix + "init_acc_val", 0.0, 0.1
         )
@@ -111,28 +111,28 @@ def get_objective_optimiser(optimiser, trial, model):
             weight_decay=weight_decay,
         )
 
-    elif optimiser in ["Adam", "Adamax", "AdamW", "NAdam", "RAdam"]:
+    elif optimiser.lower() in ["adam", "adamax", "adamw", "nadam", "radam"]:
         betas = (
             trial.suggest_float(prefix + "beta1", 0.8, 0.999),
             trial.suggest_float(prefix + "beta2", 0.9, 0.999),
         )
         eps = trial.suggest_float(prefix + "eps", 1e-10, 1e-6, log=True)
         kwargs = dict(lr=lr, betas=betas, eps=eps, weight_decay=weight_decay)
-        if optimiser == "Adam":
+        if optimiser.lower() == "adam":
             return optim.Adam(params, **kwargs)
-        elif optimiser == "Adamax":
+        elif optimiser.lower() == "adamax":
             return optim.Adamax(params, **kwargs)
-        elif optimiser == "AdamW":
+        elif optimiser.lower() == "adamw":
             return optim.AdamW(params, **kwargs)
-        elif optimiser == "NAdam":
+        elif optimiser.lower() == "nadam":
             momentum_decay = trial.suggest_float(
                 prefix + "momentum_decay", 0.004, 0.1
             )
             return optim.NAdam(params, **kwargs, momentum_decay=momentum_decay)
-        elif optimiser == "RAdam":
+        elif optimiser.lower() == "radam":
             return optim.RAdam(params, **kwargs)
 
-    elif optimiser == "ASGD":
+    elif optimiser.lower() == "asgd":
         lambd = trial.suggest_float(prefix + "lambd", 1e-6, 1e-3)
         alpha = trial.suggest_float(prefix + "alpha", 0.5, 0.99)
         t0 = trial.suggest_int(prefix + "t0", 1, 1000)
@@ -140,7 +140,7 @@ def get_objective_optimiser(optimiser, trial, model):
             params, lr=lr, lambd=lambd, alpha=alpha, t0=t0, weight_decay=weight_decay
         )
 
-    elif optimiser == "RMSprop":
+    elif optimiser.lower() == "rmsprop":
         alpha = trial.suggest_float(prefix + "alpha", 0.8, 0.999)
         momentum = trial.suggest_float(prefix + "momentum", 0.0, 0.99)
         return optim.RMSprop(
@@ -151,7 +151,7 @@ def get_objective_optimiser(optimiser, trial, model):
             weight_decay=weight_decay,
         )
 
-    elif optimiser == "Rprop":
+    elif optimiser.lower() == "rprop":
         etas = (
             trial.suggest_float(prefix + "eta_min", 0.1, 0.99),
             trial.suggest_float(prefix + "eta_max", 1.01, 2.0),
@@ -162,7 +162,7 @@ def get_objective_optimiser(optimiser, trial, model):
         )
         return optim.Rprop(params, lr=lr, etas=etas, step_sizes=step_sizes)
 
-    elif optimiser == "SGD":
+    elif optimiser.lower() == "sgd":
         momentum = trial.suggest_float(prefix + "momentum", 0.0, 0.99)
         dampening = trial.suggest_float(prefix + "dampening", 0.0, 0.5)
         return optim.SGD(
@@ -182,14 +182,14 @@ def get_objective_policy(policy, trial, optimiser, epochs):
     prefix = policy.lower() + "_"
 
     # MultiplicativeLR
-    if policy == "multiplicativelr":
+    if policy.lower() == "multiplicativelr":
         multiplier = trial.suggest_float(prefix + "mult_factor", 0.9, 1.0)
         return torch.optim.lr_scheduler.MultiplicativeLR(
             optimiser, lr_lambda=lambda _: multiplier
         )
 
     # StepLR
-    elif policy == "steplr":
+    elif policy.lower() == "steplr":
         step_size = trial.suggest_int(prefix + "step_size", 5, 50)
         gamma = trial.suggest_float(prefix + "gamma", 0.1, 0.9)
         return torch.optim.lr_scheduler.StepLR(
@@ -197,7 +197,7 @@ def get_objective_policy(policy, trial, optimiser, epochs):
         )
 
     # MultiStepLR
-    elif policy == "multisteplr":
+    elif policy.lower() == "multisteplr":
         num_milestones = trial.suggest_int(prefix + "num_milestones", 1, 5)
         milestones = sorted(
             [
@@ -211,7 +211,7 @@ def get_objective_policy(policy, trial, optimiser, epochs):
         )
 
     # ConstantLR
-    elif policy == "constantlr":
+    elif policy.lower() == "constantlr":
         factor = trial.suggest_float(prefix + "constant_factor", 0.5, 1.0)
         total_iters = trial.suggest_int(prefix + "total_iters", 1, epochs)
         return torch.optim.lr_scheduler.ConstantLR(
@@ -219,7 +219,7 @@ def get_objective_policy(policy, trial, optimiser, epochs):
         )
 
     # LinearLR
-    elif policy == "linearlr":
+    elif policy.lower() == "linearlr":
         start_factor = trial.suggest_float(prefix + "start_factor", 0.1, 1.0)
         total_iters = trial.suggest_int(prefix + "total_iters", 1, epochs)
         return torch.optim.lr_scheduler.LinearLR(
@@ -227,12 +227,12 @@ def get_objective_policy(policy, trial, optimiser, epochs):
         )
 
     # ExponentialLR
-    elif policy == "exponentiallr":
+    elif policy.lower() == "exponentiallr":
         gamma = trial.suggest_float(prefix + "gamma", 0.8, 0.999)
         return torch.optim.lr_scheduler.ExponentialLR(optimiser, gamma=gamma)
 
     # SequentialLR
-    elif policy == "sequentiallr":
+    elif policy.lower() == "sequentiallr":
         # Build two schedulers and chain them
         step_size1 = trial.suggest_int(prefix + "seq_step1", 5, 20)
         gamma1 = trial.suggest_float(prefix + "seq_gamma1", 0.1, 0.9)
@@ -252,7 +252,7 @@ def get_objective_policy(policy, trial, optimiser, epochs):
         )
 
     # CosineAnnealingLR
-    elif policy == "cosineannealinglr":
+    elif policy.lower() == "cosineannealinglr":
         T_max = trial.suggest_int(prefix + "T_max", 5, epochs)
         eta_min = trial.suggest_float(prefix + "eta_min", 1e-6, 1e-3, log=True)
         return torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -260,7 +260,7 @@ def get_objective_policy(policy, trial, optimiser, epochs):
         )
 
     # ChainedScheduler
-    elif policy == "chainedscheduler":
+    elif policy.lower() == "chainedscheduler":
         exp_gamma = trial.suggest_float(prefix + "chain_exp_gamma", 0.8, 0.999)
         cosine_T_max = trial.suggest_int(prefix + "chain_T_max", 5, epochs)
         sched1 = torch.optim.lr_scheduler.ExponentialLR(optimiser, gamma=exp_gamma)
@@ -270,7 +270,7 @@ def get_objective_policy(policy, trial, optimiser, epochs):
         return torch.optim.lr_scheduler.ChainedScheduler([sched1, sched2])
 
     # ReduceLROnPlateau
-    elif policy == "reducelronplateau":
+    elif policy.lower() == "reducelronplateau":
         patience = trial.suggest_int(prefix + "plateau_patience", 2, 10)
         factor = trial.suggest_float(prefix + "plateau_factor", 0.1, 0.9)
         return torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -278,7 +278,7 @@ def get_objective_policy(policy, trial, optimiser, epochs):
         )
 
     # CosineAnnealingWarmRestarts
-    elif policy == "cosineannealingwarmrestarts":
+    elif policy.lower() == "cosineannealingwarmrestarts":
         T_0 = trial.suggest_int(prefix + "T_0", 5, epochs)
         T_mult = trial.suggest_int(prefix + "T_mult", 1, 3)
         eta_min = trial.suggest_float(prefix + "eta_min", 1e-6, 1e-3, log=True)
@@ -371,8 +371,13 @@ def get_model(name: str, encoder, weights):
 def get_args():
     parser = argparse.ArgumentParser()
 
+    parser.add_argument("--model", type=str, required=True, help="model to use", choices=MODEL_CHOICES)
+    parser.add_argument("--encoder", type=str, default="resnet50", help="", choices=ENCODER_CHOICES,)
+    parser.add_argument("--weights", type=str, default=None, help="", choices=["imagenet"])
     parser.add_argument("--optimiser", type=str, default=None)
     parser.add_argument("--policy", type=str, default=None)
+    parser.add_argument("--n_trials", type=int, required=True)
+    parser.add_argument("--epochs_per_trial", type=int, default=10)
 
     return parser
 
@@ -381,10 +386,10 @@ def objective(trial):
     opts = get_args().parse_args()
 
     print("TUNING")
-    epochs = 5
+    epochs = opts.epochs_per_trial
 
     # Model
-    model = get_model("unetplusplus", "resnet50", "imagenet")
+    model = get_model(opts.model, opts.encoder, opts.weights)
     model.to(DEVICE)
 
     if opts.optimiser is None:
@@ -405,18 +410,16 @@ def objective(trial):
     # Data
     train_loader, val_loader = get_dataloader(
         dataset="all",
-        batch_size=4,
-        num_workers=2,
+        batch_size=8,
+        num_workers=4,
         pin_memory=True,
         shuffle=True,
     )
 
     best_vloss = 999
-    best_score = 0.0
     cur_itrs = 0
 
     grad_scaler = torch.amp.GradScaler(DEVICE, enabled=True)
-    loss_stop_policy = EarlyStopping(patience=10, delta=0.001)  # early stopping policy
     metrics = StreamSegMetrics(len(COLOR_TO_CLASS))
 
     for epoch in range(epochs):
@@ -431,6 +434,7 @@ def objective(trial):
             epochs=(epoch, epochs),
             gradient_clipping=0.1,
             use_amp=True,
+            verbose=False,
         )
 
         cur_itrs += len(train_loader)
@@ -442,6 +446,7 @@ def objective(trial):
             epochs=(epoch, epochs),
             loss_fn=criterion,
             device=DEVICE,
+            verbose=False,
         )
 
         if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
@@ -450,24 +455,14 @@ def objective(trial):
             scheduler.step()
 
         print(
-            f"Epoch {epoch+1}/{epochs} - Avg Train Loss: {avg_tloss:.4f}, Avg Val Loss: {avg_vloss:.4f}, Mean IoU: {val_score['Mean IoU']:.4f}"
+            f"Epoch {epoch+1}/{epochs} - Avg Train Loss: {avg_tloss:.4f}, Avg Val Loss: {avg_vloss:.4f}, Mean IoU: {val_score['Mean IoU']:.4f}",
+            end=" "
         )
         print(
-            f"Training time: {str(datetime.timedelta(seconds=int(elapsed_ttime)))}, ",
-            end="",
+            f"Training time: {str(datetime.timedelta(seconds=int(elapsed_ttime)))},",
+            end=" ",
         )
         print(f"Validation time: {str(datetime.timedelta(seconds=int(elapsed_vtime)))}")
-
-        # save model
-        checkpoint = create_ckpt(
-            cur_itrs=cur_itrs,
-            model=model,
-            optimiser=optimiser,
-            scheduler=scheduler,
-            tloss=avg_tloss,
-            vloss=avg_vloss,
-            vscore=val_score,
-        )
 
         if avg_vloss < best_vloss:
             best_vloss = avg_vloss
@@ -477,16 +472,19 @@ def objective(trial):
             raise optuna.exceptions.TrialPruned()
 
         torch.cuda.empty_cache()  # clear cache
-        loss_stop_policy(avg_vloss)
-        if loss_stop_policy.early_stop:
-            print("No improvement in mean IoU - terminating.")
-            break
     return best_vloss
 
 
 if __name__ == "__main__":
+    opts = get_args().parse_args()
+    print("Training model:", opts.model)
+    print(f"Encoder: {opts.encoder}")
+    print(f"Weights: {opts.weights}")
+
     study = optuna.create_study(direction="maximize")
-    study.optimize(objective, n_trials=20)
+    study.optimize(objective, n_trials=opts.n_trials)
+
+
 
     print("Best trial:")
     trial = study.best_trial

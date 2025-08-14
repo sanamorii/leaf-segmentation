@@ -108,9 +108,9 @@ def get_dataloader(dataset, batch_size, num_workers, pin_memory=False, shuffle=T
     else:
         raise Exception("invalid dataset")
     
-    print("Training dataset size: ", len(train_ds))
-    print("Validation dataset size: ", len(val_ds))
-    print("Dataset type: ", dataset)
+    # print("Training dataset size: ", len(train_ds))
+    # print("Validation dataset size: ", len(val_ds))
+    # print("Dataset type: ", dataset)
 
     train_loader = DataLoader(
         train_ds,

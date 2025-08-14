@@ -1,13 +1,7 @@
 import datetime
 import torch
-import torchvision
-import torch.nn as nn
-import torch.optim as optim
 from torch.optim import Optimizer
-from torch.utils.data import Dataset
-from torchvision import transforms
 from torch.utils.data import DataLoader
-from PIL import Image
 from tqdm import tqdm
 
 import numpy as np
@@ -22,6 +16,7 @@ import matplotlib.pyplot as plt
 import os
 import sys
 import cv2
+import time
 
 from dataset.bean import rgb_to_class
 from loss.earlystop import EarlyStopping
@@ -38,10 +33,18 @@ def validate_epoch(
     loss_fn,
     device: str,
     epochs: tuple[int, int],
+    verbose: bool = True,
 ):
+    start = time.time()
+    
     model.eval()
     metrics.reset()
-    val_bar = tqdm(loader, desc=f"Epoch {epochs[0]+1}/{epochs[1]} [Val]", leave=False)
+    
+    if verbose:
+        val_bar = tqdm(loader, desc=f"Epoch {epochs[0]+1}/{epochs[1]} [Val]", leave=False)
+    else:
+        val_bar = loader
+
     running_vloss = 0
 
     with torch.no_grad():
@@ -59,11 +62,11 @@ def validate_epoch(
             loss = loss_fn(output, mask)
             running_vloss += loss.item()
             metrics.update(targets, preds)
-            val_bar.set_postfix(loss=loss.item())
+            if verbose: val_bar.set_postfix(loss=loss.item())
 
         score = metrics.get_results()
     
-    elapsed_time = val_bar.format_dict['elapsed']
+    elapsed_time = time.time() - start
     avg_val_loss = running_vloss / len(loader)
     return elapsed_time, score, avg_val_loss
 
@@ -78,13 +81,19 @@ def train_epoch(
     epochs: tuple[int, int],
     use_amp: bool = False,           # mixed precision vs default precision (FP16)
     gradient_clipping: float = 1.0,  # prevent exploding gradients
+    verbose : bool = True,
 ):
+    start = time.time()
+
     model.train()
     running_loss = 0
 
-    train_bar = tqdm(
-        loader, desc=f"Epoch {epochs[0]+1}/{epochs[1]} [Train]", leave=False
-    )
+    if verbose:
+        train_bar = tqdm(
+            loader, desc=f"Epoch {epochs[0]+1}/{epochs[1]} [Train]", leave=False
+        )
+    else:
+        train_bar = loader
 
     for imgs, masks in train_bar:
         imgs = imgs.to(device, non_blocking=True)
@@ -111,8 +120,9 @@ def train_epoch(
 
         loss_item = loss.item()
         running_loss += loss_item
-        train_bar.set_postfix(loss=loss_item)
-    elapsed_time = train_bar.format_dict['elapsed']
+        if verbose: train_bar.set_postfix(loss=loss_item)
+    
+    elapsed_time = time.time() - start
 
     avg_loss = running_loss / len(loader)
     return elapsed_time, avg_loss
