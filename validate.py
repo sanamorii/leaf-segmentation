@@ -13,6 +13,9 @@ import argparse
 from torchmetrics.segmentation import MeanIoU, DiceScore, HausdorffDistance
 import segmentation_models_pytorch as smp
 
+from metrics import StreamSegMetrics
+from models import modelling
+from models.modelling import ENCODER_CHOICES, MODEL_CHOICES
 from dataset.utils import decode_mask, overlay
 from dataset.bean import COLOR_TO_CLASS, CLASS_COLORS
 
@@ -57,11 +60,7 @@ def save_visuals(save_dir, basename, image, pred_mask, gt_mask=None):
     if gt_mask is not None:
         Image.fromarray(gt_mask).save(f"{save_dir}/{basename}_gt.png")
 
-    # if gt_mask is not None:
-    #     Image.fromarray(overlay(image, pred_mask)).save(f"{save_dir}/{basename}_overlay.png")
-
-
-def evaluate_folder(model, img_dir, mask_dir, save_dir, num_classes, device, resize=(256, 256)):
+def evaluate_folder(model, img_dir, mask_dir, save_dir, num_classes, device, verbosity, resize=(256, 256)):
     img_paths = sorted(Path(img_dir).glob("*.png"))
     mask_paths = sorted(Path(mask_dir).glob("*.png"))
 
@@ -70,12 +69,16 @@ def evaluate_folder(model, img_dir, mask_dir, save_dir, num_classes, device, res
     model.to(device)
     model.eval()
 
-    mean_iou = MeanIoU(num_classes=num_classes, input_format='index').to(device)
-    dice = DiceScore(num_classes=num_classes, average='macro', input_format='index').to(device)
-    hausdorff = HausdorffDistance(num_classes=num_classes, input_format='index').to(device)
+
+    metrics = StreamSegMetrics(num_classes)
+
+    if verbosity > 1:
+        loader = tqdm(zip(img_paths, mask_paths), total=len(img_paths), desc="Evaluating")
+    else:
+        loader = zip(img_paths, mask_paths)
 
     with torch.no_grad():
-        for img_path, mask_path in tqdm(zip(img_paths, mask_paths), total=len(img_paths), desc="Evaluating"):
+        for img_path, mask_path in loader:
             basename = img_path.stem
 
             orig_img, img_tensor = load_image(img_path, resize)
@@ -86,40 +89,26 @@ def evaluate_folder(model, img_dir, mask_dir, save_dir, num_classes, device, res
             output = model(img_tensor)
             pred = torch.argmax(output, dim=1)  # [B, H, W]
             pred_np = pred.squeeze().cpu().numpy()
+            gt_np = gt_tensor.squeeze().cpu().numpy()
 
             pred_mask_img = decode_mask(pred_np, CLASS_COLORS)
 
             # Update metrics
-            mean_iou.update(pred, gt_tensor)
-            dice.update(pred, gt_tensor)
-            # hausdorff.update(pred, gt_tensor)
+            metrics.update(gt_np, pred_np)
 
             # Save prediction, GT, input
             save_visuals(save_dir, basename, orig_img, pred_mask_img, gt_mask_img)
+    results = metrics.get_results()
+    print("Evaluation Results:")
+    print(f"Mean IoU           : {results['Mean IoU']:.4f}")
+    print(f"Dice Coefficient   : {results['Mean Dice']:.4f}")
+    print(f"Accuracy   : {results['Mean Acc']:.4f}")
+    print(metrics.to_str(results))
+    print("\n")
 
-    print("\nEvaluation Results:")
-    print(f"Mean IoU           : {mean_iou.compute().item():.4f}")
-    print(f"Dice Coefficient   : {dice.compute().item():.4f}")
-    # print(f"Hausdorff Distance : {hausdorff.compute().item():.4f}")
-
-def get_model(name, ckpt_path, num_classes):
-    if name == "unetplusplus":
-        model = smp.UnetPlusPlus(
-            encoder_name="resnet34",
-            encoder_weights="imagenet",
-            classes=num_classes,
-            in_channels=3,
-            decoder_attention_type="scse"
-        )
-        weights_only = False
-    elif name == "deeplabv3plus":
-        model = smp.DeepLabV3Plus(
-            encoder_name="resnet152",
-            encoder_weights="imagenet",
-            in_channels=3,
-            classes=len(COLOR_TO_CLASS),
-        )
-        weights_only = True
+def get_model(name, encoder, weights, ckpt_path, num_classes):
+    model = modelling.get_model(name, encoder, weights, num_classes)
+    weights_only = False
     checkpoint = torch.load(ckpt_path, map_location='cpu', weights_only=weights_only)
     if weights_only:
         model.load_state_dict(checkpoint)
@@ -130,13 +119,16 @@ def get_model(name, ckpt_path, num_classes):
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Evaluate segmentation model on image folder")
-    parser.add_argument("--model", type=str, required=True, help="Name of model to use")
+    parser.add_argument("--model", type=str, required=True, choices=MODEL_CHOICES, help="Name of model to use")
+    parser.add_argument("--encoder", type=str, required=True, choices=ENCODER_CHOICES, help="Name of model encoder to use")
+    parser.add_argument("--weights", type=str, choices=["imagenet"], default=None, help="Name of pretrained weights to use for transfer learning")
     parser.add_argument("--images", type=str, required=True, help="Path to folder containing input images")
     parser.add_argument("--masks", type=str, required=True, help="Path to folder containing ground truth masks")
     parser.add_argument("--checkpoint", type=str, required=True, help="Path to trained model checkpoint")
     parser.add_argument("--output", type=str, default="results", help="Folder to save prediction results")
     parser.add_argument("--resize", type=int, nargs=2, default=[256, 256], help="Resize shape: height width")
     parser.add_argument("--device", type=str, default="cuda", help="Device to run inference on")
+    parser.add_argument("--verbosity", type=int, default=2, help="Verbosity level")
     return parser.parse_args()
 
 
@@ -144,8 +136,18 @@ def main():
     args = parse_args()
 
     num_classes = len(COLOR_TO_CLASS)
-    model = get_model(args.model, args.checkpoint, num_classes)
-    
+    model = get_model(args.model, args.encoder, args.weights, args.checkpoint, num_classes)
+    if not os.path.isdir(args.masks): raise Exception(f"not valid folder: {args.masks}")
+    if not os.path.isdir(args.images): raise Exception(f"not valid folder: {args.images}")
+
+    if args.verbosity > 0:
+        print("-"*50)
+        print(f"Encoder: {args.encoder}")
+        print(f"Weights: {args.weights}")
+        print(f"Model: {model.name}")
+        print(f"Using: {args.checkpoint}")
+        print("-"*50)
+
     evaluate_folder(
         model=model,
         img_dir=args.images,
@@ -153,7 +155,8 @@ def main():
         save_dir=args.output,
         num_classes=num_classes,
         device=args.device,
-        resize=tuple(args.resize)
+        resize=tuple(args.resize),
+        verbosity=args.verbosity,
     )
 
 

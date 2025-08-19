@@ -135,11 +135,13 @@ def train_fn(
     train_loader: DataLoader,
     val_loader: DataLoader,
     epochs : int,
+    patience: int,
     device,
     num_classes : int,
     use_amp: bool = False,
     gradient_clipping: float = 0.1,
     visualise: bool = False,
+    ckpt_prefix = None,
 ):
 
     best_vloss = np.inf
@@ -147,7 +149,7 @@ def train_fn(
     cur_itrs = 0
 
     grad_scaler = torch.amp.GradScaler(device, enabled=use_amp)
-    loss_stop_policy = EarlyStopping(patience=10, delta=0.001)  # early stopping policy
+    loss_stop_policy = EarlyStopping(patience=patience, delta=0.001)  # early stopping policy
     metrics = StreamSegMetrics(num_classes)
 
     for epoch in range(epochs):
@@ -177,11 +179,9 @@ def train_fn(
 
         scheduler.step(avg_vloss)  # epoch param is deprecated
 
-        print(
-            f"Epoch {epoch+1}/{epochs} - Avg Train Loss: {avg_tloss:.4f}, Avg Val Loss: {avg_vloss:.4f}, Mean IoU: {val_score['Mean IoU']:.4f}"
-        )
-        print(f"Training time: {str(datetime.timedelta(seconds=int(elapsed_ttime)))}, ", end="")
-        print(f"Validation time: {str(datetime.timedelta(seconds=int(elapsed_vtime)))}")
+        print(f"Epoch {epoch+1}/{epochs} - Train Loss: {avg_tloss:.4f}, Val Loss: {avg_vloss:.4f}")
+        print(f"Overall Acc: {val_score['Overall Acc']:.4f}, Mean Acc: {val_score['Mean Acc']:.4f}, FreqW Acc: {val_score['FreqW Acc']:.4f}, Mean IoU: {val_score['Mean IoU']:.4f}, Mean Dice: {val_score['Mean Dice']:.4f}")
+        print(f"Time: {str(datetime.timedelta(seconds=int(elapsed_ttime)))} - {str(datetime.timedelta(seconds=int(elapsed_vtime)))}")
 
         # save model
         checkpoint = create_ckpt(
@@ -194,16 +194,18 @@ def train_fn(
             vscore=val_score,
         )
 
+        prefix = f"{ckpt_prefix}_" if ckpt_prefix else ""
         if avg_vloss < best_vloss:
             best_vloss = avg_vloss
         if val_score["Mean IoU"] > best_score:
             best_score = val_score["Mean IoU"]
-            save_ckpt(checkpoint, f"checkpoints/{model.name}_{epochs}_best.pth")
-        save_ckpt(checkpoint, f"checkpoints/{model.name}_{epochs}_current.pth")
+            save_ckpt(checkpoint, f"checkpoints/{model.name}_{prefix}best.pth")
+        save_ckpt(checkpoint, f"checkpoints/{model.name}_{prefix}current.pth")
 
         torch.cuda.empty_cache()  # clear cache
-
-        loss_stop_policy(best_vloss)
-        if loss_stop_policy.early_stop:
-            print("No improvement - terminating.")
-            break
+        
+        if patience > 0:
+            loss_stop_policy(best_vloss)
+            if loss_stop_policy.early_stop:
+                print("No improvement - terminating.")
+                break

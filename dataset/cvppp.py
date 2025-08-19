@@ -13,18 +13,17 @@ import cv2
 
 class CVPPPLeafDataset(Dataset):
     """CVPPP dataset"""
-    def __init__(self, img_dir, mask_dir, transforms=None):
+    def __init__(self, dir, transforms=None):
         """
         img_dir: folder containing RGB images (ending with _rgb.png)
         mask_dir: folder containing per-leaf label masks (ending with _label.png)
         transforms: optional transformations (Albumentations or torchvision)
         """
-        self.img_dir = img_dir
-        self.mask_dir = mask_dir
+        self.dir = dir
         self.transforms = transforms
 
         # match images and masks by filename prefix
-        self.files = sorted([f for f in os.listdir(img_dir) if f.endswith("_rgb.png")])
+        self.files = sorted([f for f in os.listdir(dir) if f.endswith("_rgb.png")])
     
     def __len__(self):
         return len(self.files)
@@ -35,7 +34,7 @@ class CVPPPLeafDataset(Dataset):
         mask_file = prefix + "_label.png"
 
         # load RGB image
-        img = Image.open(os.path.join(self.img_dir, img_file)).convert("RGB")
+        img = Image.open(os.path.join(self.dir, img_file)).convert("RGB")
         img_np = np.array(img)
 
         # load label mask

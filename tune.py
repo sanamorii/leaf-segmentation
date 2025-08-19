@@ -7,10 +7,12 @@ import torch.optim as optim
 import numpy as np
 
 import segmentation_models_pytorch as smp
+from torchmetrics.segmentation import DiceScore
 
 from loss.earlystop import EarlyStopping
 from metrics import StreamSegMetrics
 from models.unetdropout import UNETDropout
+from models.modelling import ENCODER_CHOICES, MODEL_CHOICES
 from train import create_ckpt, train_epoch, train_fn, validate_epoch
 from dataset.bean import COLOR_TO_CLASS
 from loss.cedice import CEDiceLoss
@@ -18,36 +20,7 @@ from dataset.utils import get_dataloader
 from utils import save_ckpt
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-MODEL_CHOICES = [
-    "segformer",
-    "unet",
-    "unetplusplus",
-    "unetdropout",
-    "fpn",
-    "deeplabv3plus",
-    "deeplabv3",
-]
-ENCODER_CHOICES = [
-    "mit_b0",
-    "mit_b1",
-    "mit_b2",
-    "mit_b3",
-    "mit_b4",
-    "mit_b5",
-    "resnet18",
-    "resnet34",
-    "resnet50",
-    "resnet101",
-    "resnet152",
-    "efficientnet-b0",
-    "efficientnet-b1",
-    "efficientnet-b2",
-    "efficientnet-b3",
-    "efficientnet-b4",
-    "efficientnet-b5",
-    "efficientnet-b6",
-    "efficientnet-b7",
-]
+
 
 OPTIMISERS = [
     "Adadelta",
@@ -481,7 +454,7 @@ if __name__ == "__main__":
     print(f"Encoder: {opts.encoder}")
     print(f"Weights: {opts.weights}")
 
-    study = optuna.create_study(direction="maximize")
+    study = optuna.create_study(direction="minimize")
     study.optimize(objective, n_trials=opts.n_trials)
 
 
