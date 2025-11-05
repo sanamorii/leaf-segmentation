@@ -127,9 +127,6 @@ class LeafDataset(Dataset):
 def visualize_sample(img, target, class_idx_to_name=None, alpha=0.4):
     """
     img: tensor [C, H, W] in 0..1
-    target: dict from dataset __getitem__
-    class_idx_to_name: dict {int: str} mapping class index -> name
-    alpha: mask transparency
     """
     # Convert image to numpy for plotting
     img_np = img.permute(1, 2, 0).cpu().numpy()
@@ -179,10 +176,7 @@ if __name__ == "__main__":
 
     dataset = LeafDataset(img_dir, mask_dir, category_json_path, transforms=None)
     
-    # Build reverse mapping from dataset mapping
     class_idx_to_name = {0: "background", 1: "leaf", 2: "pot", 3: "soil", 4: "stem"}
-
-    # Pick random sample
     idx = random.randint(0, len(dataset) - 1)
     img, target = dataset[idx]
 

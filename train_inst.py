@@ -41,6 +41,8 @@ def _inst_evaluate(model, data_loader, device):
     print(f"Validation Loss: {loss_sum / len(data_loader):.4f}")
     return loss_sum / len(data_loader)
 
+
+
 def collate_fn(batch):
     return tuple(zip(*batch))
 
@@ -53,7 +55,6 @@ def main():
     val_size = len(dataset) - train_size
 
     train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
-
 
     train_loader = DataLoader(train_dataset, batch_size=2, shuffle=True, num_workers=4, collate_fn=collate_fn)
     val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False, num_workers=2, collate_fn=collate_fn)
