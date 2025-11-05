@@ -19,16 +19,18 @@ class EarlyStopping:
         if np.isnan(val_loss):
             self.trace_func("Validation loss is NaN. Ignoring this epoch.")
             return
-
-        if self.best_val_loss is None:
-            self.best_val_loss = val_loss
-        elif val_loss < self.best_val_loss - self.delta:
-            # Significant improvement detected
-            self.best_val_loss = val_loss
-            self.counter = 0  # Reset counter since improvement occurred
+        if self.patience > 0:
+            if self.best_val_loss is None:
+                self.best_val_loss = val_loss
+            elif val_loss < self.best_val_loss - self.delta:
+                # Significant improvement detected
+                self.best_val_loss = val_loss
+                self.counter = 0  # Reset counter since improvement occurred
+            else:
+                # No significant improvement
+                self.counter += 1
+                self.trace_func(f'EarlyStopping counter: {self.counter} out of {self.patience}')
+                if self.counter >= self.patience:
+                    self.early_stop = True
         else:
-            # No significant improvement
-            self.counter += 1
-            self.trace_func(f'EarlyStopping counter: {self.counter} out of {self.patience}')
-            if self.counter >= self.patience:
-                self.early_stop = True
+            print("EarlyStopping disabled: this shouldn't appear.")

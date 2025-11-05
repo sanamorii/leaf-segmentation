@@ -60,6 +60,7 @@ def collect_all_data(base_dir: str, ext: str = "png") -> List[Tuple[str, str]]:
     return pairs
 
 
+
 def decode_mask(mask, class_colors):
     h, w = mask.shape
     color_mask = np.zeros((h, w, 3), dtype=np.uint8)
@@ -68,6 +69,7 @@ def decode_mask(mask, class_colors):
         color_mask[mask == class_id] = color
 
     return color_mask
+
 
 
 def overlay(image, color_mask, alpha=0.5):

@@ -12,8 +12,6 @@ import random
 import cv2
 
 
-
-
 class LeafDataset(Dataset):
     def __init__(self, img_dir, mask_dir, category_json_path, transforms=None, leaf_only=True):
         self.img_dir = img_dir
@@ -38,7 +36,18 @@ class LeafDataset(Dataset):
             elif "Stem" in v and not self.leaf_only:
                 self.cat_id_to_class_idx[cat_id] = 4
             else:
-                self.cat_id_to_class_idx[cat_id] = 0  # unknown/ignore
+                self.cat_id_to_class_idx[cat_id] = 0  # ignore
+
+    def _mask_to_box(self, mask):
+        """Convert binary mask to bounding box [xmin, ymin, xmax, ymax], skip if invalid."""
+        pos = np.where(mask)
+        if pos[0].size == 0 or pos[1].size == 0:
+            return None
+        xmin, xmax = np.min(pos[1]), np.max(pos[1])
+        ymin, ymax = np.min(pos[0]), np.max(pos[0])
+        if xmax <= xmin or ymax <= ymin:
+            return None
+        return [xmin, ymin, xmax, ymax]
 
     def __getitem__(self, idx):
         img_path = os.path.join(self.img_dir, self.imgs[idx])
@@ -60,18 +69,16 @@ class LeafDataset(Dataset):
                 continue
             
             obj_mask = (mask == obj_id)
-            if obj_mask.sum() == 0:
+            box = self._mask_to_box(obj_mask)
+            if box is None:
                 continue
             
             masks.append(obj_mask)
             labels.append(label)
-            
-            pos = np.where(obj_mask)
-            xmin, xmax = np.min(pos[1]), np.max(pos[1])
-            ymin, ymax = np.min(pos[0]), np.max(pos[0])
-            boxes.append([xmin, ymin, xmax, ymax])
+            boxes.append(box)
         
         if len(masks) == 0:
+            # Empty image case
             boxes = torch.zeros((0, 4), dtype=torch.float32)
             labels = torch.zeros((0,), dtype=torch.int64)
             masks = torch.zeros((0, img.shape[0], img.shape[1]), dtype=torch.uint8)
@@ -93,26 +100,35 @@ class LeafDataset(Dataset):
             "iscrowd": iscrowd,
         }
         
+        # Apply transforms if given
         if self.transforms:
             transformed = self.transforms(image=img, masks=[m.numpy() for m in masks])
             img = transformed["image"]
             masks = torch.stack([torch.tensor(m) for m in transformed["masks"]])
             
-            boxes = []
-            for m in masks:
-                pos = torch.where(m)
-                if pos[0].numel() == 0:
-                    boxes.append([0, 0, 0, 0])
-                else:
-                    xmin = torch.min(pos[1]).item()
-                    xmax = torch.max(pos[1]).item()
-                    ymin = torch.min(pos[0]).item()
-                    ymax = torch.max(pos[0]).item()
-                    boxes.append([xmin, ymin, xmax, ymax])
-            boxes = torch.as_tensor(boxes, dtype=torch.float32)
-            target["boxes"] = boxes
-            target["masks"] = masks
-            target["area"] = (boxes[:, 3] - boxes[:, 1]) * (boxes[:, 2] - boxes[:, 0])
+            # Recompute boxes after transforms
+            new_boxes, new_labels, new_masks = [], [], []
+            for mask_tensor, label in zip(masks, labels):
+                mask_np = mask_tensor.numpy()
+                box = self._mask_to_box(mask_np)
+                if box is None:
+                    continue
+                new_boxes.append(box)
+                new_labels.append(label)
+                new_masks.append(mask_tensor)
+            
+            if len(new_boxes) == 0:
+                target["boxes"] = torch.zeros((0, 4), dtype=torch.float32)
+                target["labels"] = torch.zeros((0,), dtype=torch.int64)
+                target["masks"] = torch.zeros((0, img.shape[1], img.shape[2]), dtype=torch.uint8)
+                target["area"] = torch.tensor([])
+                target["iscrowd"] = torch.tensor([])
+            else:
+                target["boxes"] = torch.as_tensor(new_boxes, dtype=torch.float32)
+                target["labels"] = torch.as_tensor(new_labels, dtype=torch.int64)
+                target["masks"] = torch.stack(new_masks)
+                target["area"] = (target["boxes"][:, 3] - target["boxes"][:, 1]) * (target["boxes"][:, 2] - target["boxes"][:, 0])
+                target["iscrowd"] = torch.zeros((len(new_boxes),), dtype=torch.int64)
         else:
             img = F.to_tensor(img)
         
@@ -120,7 +136,6 @@ class LeafDataset(Dataset):
 
     def __len__(self):
         return len(self.imgs)
-
 
 
 

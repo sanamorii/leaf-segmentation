@@ -146,6 +146,7 @@ def train_fn(
     train_loader: DataLoader,
     val_loader: DataLoader,
     epochs : int,
+    patience: int,
     device,
     num_classes : int,
     use_amp: bool = False,
