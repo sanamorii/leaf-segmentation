@@ -1,31 +1,6 @@
 import os
-import numpy as np
-import csv
 import torch
-from torchvision import transforms
-import matplotlib.pyplot as plt
-from pathlib import Path
-from glob import glob
-import json
 import logging
-
-
-def decode_mask(mask, class_colors):
-    h, w = mask.shape
-    color_mask = np.zeros((h, w, 3), dtype=np.uint8)
-
-    for class_id, color in class_colors.items():
-        color_mask[mask == class_id] = color
-
-    return color_mask
-
-
-def save_path_pairs_to_csv(pairs, filepath):
-    with open(filepath, mode='w', newline='') as f:
-        writer = csv.writer(f)
-        writer.writerow(["image_path", "mask_path"])
-        for img, mask in pairs:
-            writer.writerow([img, mask])
 
 def create_ckpt(
     cur_itrs: int, model, optimiser, scheduler, tloss, vloss, vscore, epoch: int = None
@@ -64,6 +39,3 @@ def load_ckpt(path, map_location=None):
     ckpt = torch.load(path, map_location=map_location)
     logging.getLogger(__name__).info("Loaded checkpoint %s", path)
     return ckpt
-
-def save_results():
-    return

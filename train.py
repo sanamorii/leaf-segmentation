@@ -21,9 +21,9 @@ import logging
 import argparse
 from pathlib import Path
 
-from dataset.bean import rgb_to_class
+from dataset.plantdreamer_semantic import rgb_to_class
 from loss.earlystop import EarlyStopping
-from utils import create_ckpt, save_ckpt, load_ckpt
+from models.utils import create_ckpt, save_ckpt, load_ckpt
 import dataset.utils as dutils
 from metrics import StreamSegMetrics
 

@@ -6,7 +6,7 @@ import albumentations as A
 from albumentations.pytorch import ToTensorV2
 from torch.utils.data import DataLoader
 
-from .bean import PlantDreamerAllBean, PlantDreamerBean
+from .plantdreamer_semantic import PlantDreamerData
 from sklearn.model_selection import train_test_split
 from typing import List, Tuple, Optional
 from pathlib import Path
@@ -14,11 +14,11 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-
 def collect_all_data(base_dir: str, ext: str = "png") -> List[Tuple[str, str]]:
     """Collect (image, mask) pairs under a base directory.
 
     Expects a structure like base_dir/<subdir>/gt/*.png and base_dir/<subdir>/mask/*.png
+    Or a structure like base_dir/gt/*.png and base_dir/mask/*.png
 
     Returns a list of (image_path, mask_path) tuples (strings). Does not raise on
     empty datasets but logs a warning.
@@ -30,36 +30,53 @@ def collect_all_data(base_dir: str, ext: str = "png") -> List[Tuple[str, str]]:
 
     pairs: List[Tuple[str, str]] = []
 
-    for subdir in base.iterdir():
-        if not subdir.is_dir():
-            continue
-        gt_dir = subdir / "gt"
-        mask_dir = subdir / "mask"
-
+    def collect_from_dirs(gt_dir: Path, mask_dir: Path):
+        """Helper to collect pairs from a single gt/mask directory pair."""
+        sub_pairs = []
         if not gt_dir.exists() or not mask_dir.exists():
-            continue
+            return sub_pairs
 
         images = sorted([str(p) for p in gt_dir.glob(f"*.{ext}")])
         masks = sorted([str(p) for p in mask_dir.glob(f"*.{ext}")])
 
         # assuming 1-to-1 filename match
         if len(images) != len(masks):
-            logger.warning("Mismatched counts in %s: images=%d masks=%d", subdir, len(images), len(masks))
+            logger.warning("Mismatched counts in %s: images=%d masks=%d", gt_dir.parent, len(images), len(masks))
             # continue to next subdir rather than asserting
-            continue
+            return sub_pairs
 
         for img_path, mask_path in zip(images, masks):
             if Path(img_path).name != Path(mask_path).name:
                 logger.warning("Filename mismatch: %s vs %s", img_path, mask_path)
                 continue
-            pairs.append((img_path, mask_path))
+            sub_pairs.append((img_path, mask_path))
+        return sub_pairs
+
+    # case 1: flat structure (base_dir/gt and base_dir/mask)
+    flat_gt = base / "gt"
+    flat_mask = base / "mask"
+    pairs.extend(collect_from_dirs(flat_gt, flat_mask))
+
+    # case 2: nested subdirectories (base_dir/<subdir>/gt, mask) 
+    for subdir in base.iterdir():
+        if not subdir.is_dir():
+            continue
+        gt_dir = subdir / "gt"
+        mask_dir = subdir / "mask"
+        pairs.extend(collect_from_dirs(gt_dir, mask_dir))
 
     if len(pairs) == 0:
         logger.warning("No image/mask pairs found under %s", base_dir)
 
     return pairs
 
-
+def rgb_to_class(mask, class_colors):
+    mask = np.array(mask)
+    class_mask = np.zeros((mask.shape[0], mask.shape[1]), dtype=np.uint8)
+    for color, class_id in class_colors.items():
+        match = np.all(mask == color, axis=-1)
+        class_mask[match] = class_id
+    return class_mask
 
 def decode_mask(mask, class_colors):
     h, w = mask.shape
@@ -69,7 +86,6 @@ def decode_mask(mask, class_colors):
         color_mask[mask == class_id] = color
 
     return color_mask
-
 
 
 def overlay(image, color_mask, alpha=0.5):
@@ -136,21 +152,8 @@ def get_dataloader(
             ]
         )
 
-    # special small-bean split used previously
-    if dataset == "bean01":
-        train_ds = PlantDreamerBean(
-            image_dir=os.path.join(base_dir, "bean0", "gt"),
-            mask_dir=os.path.join(base_dir, "bean0", "mask"),
-            transforms=train_transforms,
-        )
-        val_ds = PlantDreamerBean(
-            image_dir=os.path.join(base_dir, "bean1", "gt"),
-            mask_dir=os.path.join(base_dir, "bean1", "mask"),
-            transforms=val_transforms,
-        )
-
     # individual species support: 'bean', 'wheat', 'kale', 'mint', 'tomato'
-    elif dataset in species_dirs:
+    if dataset in species_dirs:
         species_base = species_dirs[dataset]
         all_pairs = collect_all_data(species_base, ext=ext)
         if len(all_pairs) == 0:
@@ -161,25 +164,8 @@ def get_dataloader(
         )
         train_imgs, train_masks = zip(*train_paths)
         val_imgs, val_masks = zip(*val_paths)
-        train_ds = PlantDreamerAllBean(list(train_imgs), list(train_masks), transforms=train_transforms)
-        val_ds = PlantDreamerAllBean(list(val_imgs), list(val_masks), transforms=val_transforms)
-
-    # combine all species listed in species_dirs
-    elif dataset == "all":
-        all_pairs = []
-        for sp, path in species_dirs.items():
-            all_pairs.extend(collect_all_data(path, ext=ext))
-
-        if len(all_pairs) == 0:
-            raise RuntimeError(f"No data found in any species directories: {list(species_dirs.values())}")
-
-        train_paths, val_paths = train_test_split(
-            all_pairs, test_size=0.2, random_state=seed, shuffle=shuffle
-        )
-        train_imgs, train_masks = zip(*train_paths)
-        val_imgs, val_masks = zip(*val_paths)
-        train_ds = PlantDreamerAllBean(list(train_imgs), list(train_masks), transforms=train_transforms)
-        val_ds = PlantDreamerAllBean(list(val_imgs), list(val_masks), transforms=val_transforms)
+        train_ds = PlantDreamerData(list(train_imgs), list(train_masks), transforms=train_transforms)
+        val_ds = PlantDreamerData(list(val_imgs), list(val_masks), transforms=val_transforms)
 
     else:
         raise ValueError(f"Invalid dataset identifier: {dataset}")
