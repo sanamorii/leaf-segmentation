@@ -3,6 +3,7 @@ checkpoints*/
 data/
 ref/
 slurm-*.out
+**/*.sbatch
 **/*.sh
 **/*.pth
 results/
