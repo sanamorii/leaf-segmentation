@@ -1,23 +1,22 @@
 import os
-from pathlib import Path
-from PIL import Image
 import numpy as np
-from tqdm import tqdm
 import torch
-import torchvision.transforms as T
-import albumentations as A
-from albumentations.pytorch import ToTensorV2
-import matplotlib.pyplot as plt
 import argparse
 
-from torchmetrics.segmentation import MeanIoU, DiceScore, HausdorffDistance
+from tqdm import tqdm
 import segmentation_models_pytorch as smp
+import torchvision.transforms as T
+import albumentations as A
+
+from pathlib import Path
+from PIL import Image
+from torchmetrics.segmentation import MeanIoU, DiceScore, HausdorffDistance
 
 from metrics import StreamSegMetrics
 from models import modelling
 from models.modelling import ENCODER_CHOICES, MODEL_CHOICES
 from dataset.utils import decode_mask, overlay
-from dataset.bean import COLOR_TO_CLASS, CLASS_COLORS
+from dataset.plantdreamer_semantic import COLOR_TO_CLASS, CLASS_COLORS
 
 def load_image(path, resize=(256, 256)):
     image = Image.open(path).convert("RGB")
@@ -31,26 +30,25 @@ def load_image(path, resize=(256, 256)):
     tensor = transform(image).unsqueeze(0)  # Add batch dimension
     return orig, tensor
 
-def load_mask(path, resize=(256, 256)):
-    mask = Image.open(path).convert("L")
+def load_mask(path : str, n_classes : int, resize=(256, 256)):
+    mask = Image.open(path)
     mask = np.array(mask)
 
     transform = A.Compose([
         A.Resize(height=resize[0], width=resize[1])
     ])
     transformed = transform(image=mask)
-    resized_mask = transformed["image"]
+    mask = transformed["image"]
 
-    # Sanitize class indices
-    valid_classes = list(COLOR_TO_CLASS.values())  # E.g. [0, 1, 2]
-    max_class = max(valid_classes)
+    if len(mask.shape) > 2:
+        raise RuntimeError("Mask is not monochrome, aborting")
+    if len(np.unique(mask)) > n_classes:
+        raise RuntimeError(f"Number of classes in mask is not equal to reported no. of classes.\nViolating mask: {path}")
 
-    resized_mask = np.clip(resized_mask, 0, max_class)
+    mask = np.clip(mask, 0, max(n_classes))
+    tensor = torch.tensor(mask, dtype=torch.long).unsqueeze(0)
 
-    tensor = torch.tensor(resized_mask, dtype=torch.long).unsqueeze(0)
-    decoded = decode_mask(resized_mask, CLASS_COLORS)
-
-    return decoded, tensor
+    return mask, tensor
 
 def save_visuals(save_dir, basename, image, pred_mask, gt_mask=None):
     os.makedirs(save_dir, exist_ok=True)
@@ -68,7 +66,6 @@ def evaluate_folder(model, img_dir, mask_dir, save_dir, num_classes, device, ver
 
     model.to(device)
     model.eval()
-
 
     metrics = StreamSegMetrics(num_classes)
 
@@ -106,16 +103,25 @@ def evaluate_folder(model, img_dir, mask_dir, save_dir, num_classes, device, ver
     print(metrics.to_str(results))
     print("\n")
 
-def get_model(name, encoder, weights, ckpt_path, num_classes):
-    model = modelling.get_model(name, encoder, weights, num_classes)
+
+
+def get_model(ckpt_path, num_classes):
     weights_only = False
     checkpoint = torch.load(ckpt_path, map_location='cpu', weights_only=weights_only)
+
+    # [0] - name, [1] - encoder, [2] - dataset
+    name, encoder, *_ = checkpoint["model_name"].split("-")
+    model = modelling.get_model(name=name, encoder=encoder, weights=None, num_classes=num_classes)
+
     if weights_only:
         model.load_state_dict(checkpoint)
     else:
         model.load_state_dict(checkpoint['model_state'])
     return model
 
+
+def get_model_manual():
+    pass
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Evaluate segmentation model on image folder")
