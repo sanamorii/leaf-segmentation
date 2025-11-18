@@ -2,11 +2,22 @@ import os
 import torch
 import logging
 
+from segmentation_models_pytorch.base.model import SegmentationModel
+
 def create_ckpt(
-    cur_itrs: int, model, optimiser, scheduler, tloss, vloss, vscore, epoch: int = None
+    cur_itrs: int, 
+    model : SegmentationModel, 
+    num_classes : int,
+    optimiser, 
+    scheduler, 
+    tloss, 
+    vloss, 
+    vscore, 
+    epoch: int = None
 ):
     ckpt = {
         "cur_itrs": cur_itrs,
+        "model_name": model.name,
         "model_state": model.state_dict(),
         "optimizer_state": optimiser.state_dict(),
         "scheduler_state": scheduler.state_dict(),
@@ -17,6 +28,7 @@ def create_ckpt(
         "freqw_val_acc": vscore["FreqW Acc"],
         "mean_val_iou": vscore["Mean IoU"],
         "class_val_iou": vscore["Class IoU"],
+        "num_classes": num_classes
     }
     if epoch is not None:
         ckpt["epoch"] = int(epoch)

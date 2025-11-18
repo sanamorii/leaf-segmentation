@@ -32,5 +32,3 @@ class EarlyStopping:
                 self.trace_func(f'EarlyStopping counter: {self.counter} out of {self.patience}')
                 if self.counter >= self.patience:
                     self.early_stop = True
-        else:
-            print("EarlyStopping disabled: this shouldn't appear.")

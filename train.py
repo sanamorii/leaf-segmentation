@@ -21,13 +21,13 @@ import logging
 import argparse
 from pathlib import Path
 
-from dataset.plantdreamer_semantic import rgb_to_class
+from dataset.utils import rgb_to_class
+from dataset.plantdreamer_semantic import get_dataloader
+from loss.cedice import CEDiceLoss
 from loss.earlystop import EarlyStopping
 from models.utils import create_ckpt, save_ckpt, load_ckpt
-import dataset.utils as dutils
+from models.modelling import get_model
 from metrics import StreamSegMetrics
-
-
 
 
 def validate_epoch(
@@ -107,6 +107,7 @@ def train_epoch(
         imgs = imgs.to(device, non_blocking=True)
         masks = masks.to(device, non_blocking=True)
 
+        # print("Target min/max:", masks.min().item(), masks.max().item())
 
         optimiser.zero_grad(set_to_none=True)
         if use_amp:
@@ -146,12 +147,12 @@ def train_fn(
     train_loader: DataLoader,
     val_loader: DataLoader,
     epochs : int,
-    patience: int,
     device,
     num_classes : int,
     use_amp: bool = False,
+    patience: int = 0,
     gradient_clipping: float = 0.1,
-    visualise: bool = False,
+    # visualise: bool = False,
     monitor_metric: str = "Mean IoU",
     resume: str | None = None,
     start_epoch: int = 0,
@@ -170,8 +171,8 @@ def train_fn(
         device = torch.device(device)
 
     # use the proper GradScaler constructor
-    grad_scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
-    loss_stop_policy = EarlyStopping(patience=10, delta=0.001)  # early stopping policy
+    grad_scaler = torch.amp.GradScaler(device=device, enabled=use_amp)
+    loss_stop_policy = EarlyStopping(patience=patience, delta=0.001)  # early stopping policy
     metrics = StreamSegMetrics(num_classes)
 
     # resume from checkpoint if provided
@@ -217,16 +218,15 @@ def train_fn(
         scheduler.step(avg_vloss)  # epoch param is deprecated
 
         logger.info(
-            "Epoch %d/%d - Avg Train Loss: %.4f, Avg Val Loss: %.4f, Mean IoU: %.4f",
+            "Epoch %d/%d: Avg Train Loss: %.4f, Avg Val Loss: %.4f, Mean IoU: %.4f, Training time: %s, Validation time: %s",
             epoch+1,
             epochs,
             avg_tloss,
             avg_vloss,
             val_score.get(monitor_metric, 0.0),
+            str(datetime.timedelta(seconds=int(elapsed_ttime))),
+            str(datetime.timedelta(seconds=int(elapsed_vtime)))
         )
-        logger.info("Training time: %s, Validation time: %s",
-                    str(datetime.timedelta(seconds=int(elapsed_ttime))),
-                    str(datetime.timedelta(seconds=int(elapsed_vtime))))
 
         # save model
         checkpoint = create_ckpt(
@@ -238,6 +238,7 @@ def train_fn(
             vloss=avg_vloss,
             vscore=val_score,
             epoch=epoch,
+            num_classes=num_classes
         )
 
         # ensure checkpoints directory exists
@@ -252,8 +253,8 @@ def train_fn(
         metric_value = val_score.get(monitor_metric, None)
         if metric_value is not None and metric_value > best_score:
             best_score = metric_value
-            save_ckpt(checkpoint, str(ckpt_dir / f"{model_name}_{epochs}_best.pth"))
-        save_ckpt(checkpoint, str(ckpt_dir / f"{model_name}_{epochs}_current.pth"))
+            save_ckpt(checkpoint, str(ckpt_dir / f"{model_name}-{epochs}_best.pth"))
+        save_ckpt(checkpoint, str(ckpt_dir / f"{model_name}-{epochs}_current.pth"))
 
         torch.cuda.empty_cache()  # clear cache
 
@@ -266,7 +267,9 @@ def train_fn(
 # CLI wrapper
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train segmentation model")
-    parser.add_argument("--dataset", default="all", help="dataset identifier for dataset.utils.get_dataloader")
+    parser.add_argument("--dataset", help="dataset identifier for get_dataloader")
+    parser.add_argument("--model", type=str, help="model name")
+    parser.add_argument("--encoder", type=str, help="encoder name")
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--num-workers", type=int, default=4)
@@ -275,21 +278,21 @@ if __name__ == "__main__":
     parser.add_argument("--resume", default=None)
     parser.add_argument("--use-amp", action='store_true')
     parser.add_argument("--num-classes", type=int, default=3)
-    parser.add_argument("--encoder", default='resnet34')
     args = parser.parse_args()
 
     # prepare dataloaders
-    train_loader, val_loader = dutils.get_dataloader(args.dataset, batch_size=args.batch_size, num_workers=args.num_workers)
+    train_loader, val_loader = get_dataloader(args.dataset, batch_size=args.batch_size, num_workers=args.num_workers, num_classes=args.num_classes)
 
     # create a simple model and optimizer
-    model = smp.Unet(encoder_name=args.encoder, encoder_weights='imagenet', classes=args.num_classes, activation=None)
-    model.name = f"{model.__class__.__name__}_{args.encoder}"
+    model = get_model(name=args.model, encoder=args.encoder, weights="imagenet", classes=args.num_classes)
+    model.name = f"{model.__class__.__name__.lower()}-{args.encoder}-{args.dataset}"
     device = torch.device(args.device)
     model.to(device)
 
-    optimiser = torch.optim.Adam(model.parameters(), lr=args.lr)
+    # suggested by - https://arxiv.org/pdf/1206.5533
+    optimiser = torch.optim.Adam(model.parameters(), lr=args.lr, betas=[0.9, 0.999], eps=1e-8)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimiser, mode='min', factor=0.5, patience=3)
-    loss_fn = torch.nn.CrossEntropyLoss()
+    loss_fn = CEDiceLoss(ce_weight=0.5, dice_weight=0.5)
 
     train_fn(
         model=model,
