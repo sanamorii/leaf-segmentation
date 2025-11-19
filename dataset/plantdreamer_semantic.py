@@ -17,13 +17,13 @@ from .utils import rgb_to_class
 
 logger = logging.getLogger(__name__)
 
-# CLASS_COLORS = {
-#     0: (0, 0, 0),       # Background (black)
-#     1: (0, 255, 0),     # Leaf (green)
-#     2: (255, 165, 0),   # Pot (orange)
-#     3: (139, 69, 19),   # Soil (brown)
-#     4: (157, 0, 255),   # Stem (purple)
-# }
+CLASS_COLORS = {
+    0: (0, 0, 0),       # Background (black)
+    1: (0, 255, 0),     # Leaf (green)
+    2: (255, 165, 0),   # Pot (orange)
+    3: (139, 69, 19),   # Soil (brown)
+    4: (157, 0, 255),   # Stem (purple)
+}
 COLOR_TO_CLASS = {
     (0, 0, 0): 0,  # Background
     (1, 1, 1): 1,  # Leaf

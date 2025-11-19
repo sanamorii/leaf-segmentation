@@ -1,6 +1,8 @@
 import os
 import numpy as np
 import torch
+import click
+
 import argparse
 
 from tqdm import tqdm
@@ -58,6 +60,9 @@ def save_visuals(save_dir, basename, image, pred_mask, gt_mask=None):
     if gt_mask is not None:
         Image.fromarray(gt_mask).save(f"{save_dir}/{basename}_gt.png")
 
+def save_result(path, array):
+    Image.fromarray(array).save(path)
+
 def evaluate_folder(model, img_dir, mask_dir, save_dir, num_classes, device, verbosity, resize=(256, 256)):
     img_paths = sorted(Path(img_dir).glob("*.png"))
     mask_paths = sorted(Path(mask_dir).glob("*.png"))
@@ -103,15 +108,28 @@ def evaluate_folder(model, img_dir, mask_dir, save_dir, num_classes, device, ver
     print(metrics.to_str(results))
     print("\n")
 
+def infer_single(model, img_path, save_dir, device, resize=(256,256)):
+    os.makedirs(save_dir, exist_ok=True)
 
+    model.eval()
+    with torch.no_grad():
+        orig, tensor = load_image(img_path, resize)
+        tensor = tensor.to(device)
 
-def get_model(ckpt_path, num_classes):
+        output = model(tensor)
+        pred = torch.argmax(output, dim=1)  # [B, H, W]
+        pred_np = pred.squeeze().cpu().numpy()
+    pred_mask_img = decode_mask(pred_np, CLASS_COLORS)
+
+    stem = Path(img_path).stem
+    save_result(f"{save_dir}/{stem}_orig.png", orig)
+    save_result(f"{save_dir}/{stem}_pred.png", pred_mask_img)
+
+def load_model(model_name, encoder, ckpt_path, num_classes, weights=None):
     weights_only = False
     checkpoint = torch.load(ckpt_path, map_location='cpu', weights_only=weights_only)
 
-    # [0] - name, [1] - encoder, [2] - dataset
-    name, encoder, *_ = checkpoint["model_name"].split("-")
-    model = modelling.get_model(name=name, encoder=encoder, weights=None, num_classes=num_classes)
+    model = modelling.get_model(name=model_name, encoder=encoder, weights=weights, classes=num_classes)
 
     if weights_only:
         model.load_state_dict(checkpoint)
@@ -123,48 +141,84 @@ def get_model(ckpt_path, num_classes):
 def get_model_manual():
     pass
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="Evaluate segmentation model on image folder")
-    parser.add_argument("--model", type=str, required=True, choices=MODEL_CHOICES, help="Name of model to use")
-    parser.add_argument("--encoder", type=str, required=True, choices=ENCODER_CHOICES, help="Name of model encoder to use")
-    parser.add_argument("--weights", type=str, choices=["imagenet"], default=None, help="Name of pretrained weights to use for transfer learning")
-    parser.add_argument("--images", type=str, required=True, help="Path to folder containing input images")
-    parser.add_argument("--masks", type=str, required=True, help="Path to folder containing ground truth masks")
-    parser.add_argument("--checkpoint", type=str, required=True, help="Path to trained model checkpoint")
-    parser.add_argument("--output", type=str, default="results", help="Folder to save prediction results")
-    parser.add_argument("--resize", type=int, nargs=2, default=[256, 256], help="Resize shape: height width")
-    parser.add_argument("--device", type=str, default="cuda", help="Device to run inference on")
-    parser.add_argument("--verbosity", type=int, default=2, help="Verbosity level")
-    return parser.parse_args()
+def verbose_header(verbosity, model_name, encoder, weights, ckpt):
+    if verbosity > 0:
+        click.echo("-" * 50)
+        click.echo(f"Encoder: {encoder}")
+        click.echo(f"Weights: {weights}")
+        click.echo(f"Model:   {model_name}")
+        click.echo(f"Using checkpoint: {ckpt}")
+        click.echo("-" * 50)
 
 
-def main():
-    args = parse_args()
+@click.group()
+def cli():
+    """Segmentation model inference or evaluation"""
+    pass
+
+
+@cli.command()
+@click.option("--model", required=True)
+@click.option("--encoder", required=True)
+@click.option("--checkpoint", required=True, type=click.Path(exists=True))
+@click.option("--num_classes", required=True, type=int)
+@click.option("--image", type=click.Path(exists=True))
+@click.option("--images", type=click.Path(exists=True))
+@click.option("--output", default="result", type=str)
+@click.option("--device", default="cuda")
+@click.option("--resize", default=(256,256), nargs=2, type=int)
+@click.option("--verbosity", "-v", count=True, help="Increase verbosity (-v, -vv, -vvv).")
+def infer(model, encoder, checkpoint, num_classes, image, images, output, device, resize, verbosity):
+    model = load_model(model, encoder, checkpoint, num_classes)
+    model.to(device)
+
+    verbose_header(verbosity, model, encoder, None, checkpoint)
+
+    if image:
+        infer_single(model, str(image), output, device, resize)
+        click.echo(f"Saved inference results for {image} -> {output}")
+        return
+    
+    if images:
+        for img_path in Path(images).glob("*.png"):
+            infer_single(model, str(img_path), output, device, resize)
+        click.echo(f"Saved inference results for folder {images} -> {output}")
+        return
+
+    raise click.UsageError("Provide either --image or --images")
+
+@cli.command()
+@click.option("--model", required=True)
+@click.option("--encoder", required=True)
+@click.option("--checkpoint", required=True, type=click.Path(exists=True))
+@click.option("--images", required=True, type=click.Path(exists=True))
+@click.option("--masks", required=True, type=click.Path(exists=True))
+@click.option("--output", default="eval_results")
+@click.option("--device", default="cuda")
+@click.option("--resize", default=(256,256), nargs=2, type=int)
+@click.option("--verbosity", "-v", count=True, help="Increase verbosity.")
+def evaluate(model, encoder, checkpoint, images, masks, output, device, resize, verbosity):
+    if not os.path.isdir(masks): raise Exception(f"not valid folder: {masks}")
+    if not os.path.isdir(images): raise Exception(f"not valid folder: {images}")
 
     num_classes = len(COLOR_TO_CLASS)
-    model = get_model(args.model, args.encoder, args.weights, args.checkpoint, num_classes)
-    if not os.path.isdir(args.masks): raise Exception(f"not valid folder: {args.masks}")
-    if not os.path.isdir(args.images): raise Exception(f"not valid folder: {args.images}")
+    model = load_model(model, encoder, checkpoint, num_classes)
+    model.to(device)
 
-    if args.verbosity > 0:
-        print("-"*50)
-        print(f"Encoder: {args.encoder}")
-        print(f"Weights: {args.weights}")
-        print(f"Model: {model.name}")
-        print(f"Using: {args.checkpoint}")
-        print("-"*50)
+    verbose_header(verbosity, model, encoder, None, checkpoint)
 
     evaluate_folder(
-        model=model,
-        img_dir=args.images,
-        mask_dir=args.masks,
-        save_dir=args.output,
-        num_classes=num_classes,
-        device=args.device,
-        resize=tuple(args.resize),
-        verbosity=args.verbosity,
+        model,
+        images,
+        masks,
+        output,
+        num_classes,
+        device,
+        resize,
+        verbosity,
     )
 
+    click.echo("Evaluation complete.")
 
 if __name__ == "__main__":
-    main()
+    cli()
