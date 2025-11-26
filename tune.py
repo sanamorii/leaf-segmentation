@@ -13,7 +13,7 @@ from loss.earlystop import EarlyStopping
 from metrics import StreamSegMetrics
 from models.unetdropout import UNETDropout
 from models.modelling import ENCODER_CHOICES, MODEL_CHOICES
-from train import create_ckpt, train_epoch, train_fn, validate_epoch
+from train import create_ckpt, train_epoch, train_loop, validate_epoch
 from dataset.bean import COLOR_TO_CLASS
 from loss.cedice import CEDiceLoss
 from dataset.utils import get_dataloader

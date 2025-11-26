@@ -1,5 +1,11 @@
+import time
+import logging
+import argparse
 import datetime
 import torch
+import click
+
+from pathlib import Path
 from torch.optim import Optimizer
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -12,15 +18,6 @@ import segmentation_models_pytorch.losses as smp_losses
 from segmentation_models_pytorch.base.model import SegmentationModel
 import matplotlib.pyplot as plt
 
-
-import os
-import sys
-import cv2
-import time
-import logging
-import argparse
-from pathlib import Path
-
 from dataset.utils import rgb_to_class
 from dataset.plantdreamer_semantic import get_dataloader
 from loss.cedice import CEDiceLoss
@@ -28,6 +25,25 @@ from loss.earlystop import EarlyStopping
 from models.utils import create_ckpt, save_ckpt, load_ckpt
 from models.modelling import get_model
 from metrics import StreamSegMetrics
+
+# configure logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
+logger = logging.getLogger(__name__)
+
+def setup_model(model_name, encoder, dataset, num_classes, device):
+    # create a simple model and optimizer
+    model = get_model(name=model_name, encoder=encoder, weights="imagenet", classes=num_classes)
+    model.name = f"{model.__class__.__name__.lower()}-{encoder}-{dataset}"
+    device = torch.device(device)
+    return model.to(device)
+
+def freeze_encoder(model):
+    if hasattr(model, "encoder"):
+        for p in model.encoder.parameters():
+            p.requires_grad = False
+        logger.info("Encoder frozen")
+    else:
+        logger.warning("Model has no encoder - freezing unsuccessful")
 
 
 def validate_epoch(
@@ -139,7 +155,7 @@ def train_epoch(
     return elapsed_time, avg_loss
 
 
-def train_fn(
+def train_loop(
     model : SegmentationModel,
     loss_fn,
     optimiser,
@@ -157,11 +173,7 @@ def train_fn(
     resume: str | None = None,
     start_epoch: int = 0,
 ):
-
-    # configure logging
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
-    logger = logging.getLogger(__name__)
-
+    
     best_vloss = np.inf
     best_score = 0.0
     cur_itrs = 0
@@ -264,48 +276,103 @@ def train_fn(
             break
 
 
-# CLI wrapper
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Train segmentation model")
-    parser.add_argument("--dataset", help="dataset identifier for get_dataloader")
-    parser.add_argument("--model", type=str, help="model name")
-    parser.add_argument("--encoder", type=str, help="encoder name")
-    parser.add_argument("--epochs", type=int, default=50)
-    parser.add_argument("--batch-size", type=int, default=8)
-    parser.add_argument("--num-workers", type=int, default=4)
-    parser.add_argument("--lr", type=float, default=1e-3)
-    parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
-    parser.add_argument("--resume", default=None)
-    parser.add_argument("--use-amp", action='store_true')
-    parser.add_argument("--num-classes", type=int, default=3)
-    args = parser.parse_args()
+@click.group()
+def cli():
+    """leaf-segmentation"""
+    pass
 
+@cli.command()
+@click.option("--model", type=str, required=True, help="Name of the model to use.")
+@click.option("--encoder", type=str, required=True, help="Name of the encoder to use")
+@click.option("--dataset", type=str, required=True, help="Name of the dataset to use")
+@click.option("--num_classes", type=int, required=True, help="Number of semantic classes")
+@click.option("--batch_size", type=int, default=8)
+@click.option("--num_workers", type=int, default=4)
+@click.option("--lr", type=float, default=1e-3, help="Learning rate")
+@click.option("--epochs", type=int, default=50, help="Number of epochs to train on.")
+@click.option("--device", default="cuda" if torch.cuda.is_available() else "cpu",
+              help="Device to train the model on. Default is 'cuda' if available")
+@click.option("--resume", type=click.Path(exists=True), default=None,
+              help="Resume from a prior checkpoint")
+@click.option("--use_amp", is_flag=True)
+def train(model, encoder, dataset, num_classes, batch_size, num_workers, lr, epochs, device, resume, use_amp):
     # prepare dataloaders
-    train_loader, val_loader = get_dataloader(args.dataset, batch_size=args.batch_size, num_workers=args.num_workers, num_classes=args.num_classes)
-
-    # create a simple model and optimizer
-    model = get_model(name=args.model, encoder=args.encoder, weights="imagenet", classes=args.num_classes)
-    model.name = f"{model.__class__.__name__.lower()}-{args.encoder}-{args.dataset}"
-    device = torch.device(args.device)
-    model.to(device)
+    train_loader, val_loader = get_dataloader(dataset, batch_size=batch_size, num_workers=num_workers, num_classes=num_classes)
+    model = setup_model(model, encoder, dataset, num_classes, device)
 
     # suggested by - https://arxiv.org/pdf/1206.5533
-    optimiser = torch.optim.Adam(model.parameters(), lr=args.lr, betas=[0.9, 0.999], eps=1e-8)
+    optimiser = torch.optim.Adam(model.parameters(), lr=lr, betas=[0.9, 0.999], eps=1e-8)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimiser, mode='min', factor=0.5, patience=3)
     loss_fn = CEDiceLoss(ce_weight=0.5, dice_weight=0.5)
 
-    train_fn(
+    train_loop(
         model=model,
         loss_fn=loss_fn,
         optimiser=optimiser,
         scheduler=scheduler,
         train_loader=train_loader,
         val_loader=val_loader,
-        epochs=args.epochs,
+        epochs=epochs,
         device=device,
-        num_classes=args.num_classes,
-        use_amp=args.use_amp,
+        num_classes=num_classes,
+        use_amp=use_amp,
         gradient_clipping=0.1,
         monitor_metric="Mean IoU",
-        resume=args.resume,
+        resume=resume,
     )
+
+
+
+@cli.command()
+def finetune(model, encoder, dataset, num_classes, batch_size, num_workers, lr, epochs, device, resume, use_amp):
+    train_loader, val_loader = get_dataloader(dataset, batch_size=batch_size, num_workers=num_workers, num_classes=num_classes)
+
+    pass
+
+# CLI wrapper
+if __name__ == "__main__":
+    cli()
+
+    # parser = argparse.ArgumentParser(description="Train segmentation model")
+    # parser.add_argument("--dataset", help="dataset identifier for get_dataloader")
+    # parser.add_argument("--model", type=str, help="model name")
+    # parser.add_argument("--encoder", type=str, help="encoder name")
+    # parser.add_argument("--epochs", type=int, default=50)
+    # parser.add_argument("--batch-size", type=int, default=8)
+    # parser.add_argument("--num-workers", type=int, default=4)
+    # parser.add_argument("--lr", type=float, default=1e-3)
+    # parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    # parser.add_argument("--resume", default=None)
+    # parser.add_argument("--use-amp", action='store_true')
+    # parser.add_argument("--num-classes", type=int, default=3)
+    # args = parser.parse_args()
+
+    # # prepare dataloaders
+    # train_loader, val_loader = get_dataloader(args.dataset, batch_size=args.batch_size, num_workers=args.num_workers, num_classes=args.num_classes)
+
+    # # create a simple model and optimizer
+    # model = get_model(name=args.model, encoder=args.encoder, weights="imagenet", classes=args.num_classes)
+    # model.name = f"{model.__class__.__name__.lower()}-{args.encoder}-{args.dataset}"
+    # device = torch.device(args.device)
+    # model.to(device)
+
+    # # suggested by - https://arxiv.org/pdf/1206.5533
+    # optimiser = torch.optim.Adam(model.parameters(), lr=args.lr, betas=[0.9, 0.999], eps=1e-8)
+    # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimiser, mode='min', factor=0.5, patience=3)
+    # loss_fn = CEDiceLoss(ce_weight=0.5, dice_weight=0.5)
+
+    # train_fn(
+    #     model=model,
+    #     loss_fn=loss_fn,
+    #     optimiser=optimiser,
+    #     scheduler=scheduler,
+    #     train_loader=train_loader,
+    #     val_loader=val_loader,
+    #     epochs=args.epochs,
+    #     device=device,
+    #     num_classes=args.num_classes,
+    #     use_amp=args.use_amp,
+    #     gradient_clipping=0.1,
+    #     monitor_metric="Mean IoU",
+    #     resume=args.resume,
+    # )

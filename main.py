@@ -12,7 +12,7 @@ from models.modelling import get_model
 from loss.earlystop import EarlyStopping
 from metrics import StreamSegMetrics
 from models.unetdropout import UNETDropout
-from train import create_ckpt, train_epoch, train_fn, validate_epoch
+from train import create_ckpt, train_epoch, train_loop, validate_epoch
 from dataset.bean import COLOR_TO_CLASS
 from loss.cedice import CEDiceLoss
 from dataset.utils import get_dataloader
@@ -206,7 +206,7 @@ def main():
     optimiser = get_optimiser(name=opts.optimiser, opts=opts, model=model)
     scheduler = get_policy(policy=opts.policy, optimiser=optimiser, opts=opts)
 
-    train_fn(
+    train_loop(
         model=model,
         loss_fn=loss_fn,
         optimiser=optimiser,

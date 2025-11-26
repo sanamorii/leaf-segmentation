@@ -1,0 +1,32 @@
+# Bean
+Evaluation Results:
+Mean IoU           : 0.3362
+Dice Coefficient   : 0.4205
+Accuracy   : 0.4230
+Overall Acc: 0.867584
+Mean Acc: 0.423007
+FreqW Acc: 0.816790
+Mean IoU: 0.336223
+Mean Dice: 0.420528
+
+# Kale
+Evaluation Results:
+Mean IoU           : 0.3451
+Dice Coefficient   : 0.4407
+Accuracy   : 0.5143
+Overall Acc: 0.760719
+Mean Acc: 0.514309
+FreqW Acc: 0.664580
+Mean IoU: 0.345082
+Mean Dice: 0.440735
+
+# Mint
+Evaluation Results:
+Mean IoU           : 0.4521
+Dice Coefficient   : 0.5788
+Accuracy   : 0.5040
+Overall Acc: 0.919047
+Mean Acc: 0.504011
+FreqW Acc: 0.852272
+Mean IoU: 0.452097
+Mean Dice: 0.578843

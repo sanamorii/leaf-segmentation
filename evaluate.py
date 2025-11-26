@@ -32,7 +32,7 @@ def load_image(path, resize=(256, 256)):
     tensor = transform(image).unsqueeze(0)  # Add batch dimension
     return orig, tensor
 
-def load_mask(path : str, n_classes : int, resize=(256, 256)):
+def load_mask(path : str, n_classes : int, resize : tuple=(256, 256)):
     mask = Image.open(path)
     mask = np.array(mask)
 
@@ -45,9 +45,9 @@ def load_mask(path : str, n_classes : int, resize=(256, 256)):
     if len(mask.shape) > 2:
         raise RuntimeError("Mask is not monochrome, aborting")
     if len(np.unique(mask)) > n_classes:
-        raise RuntimeError(f"Number of classes in mask is not equal to reported no. of classes.\nViolating mask: {path}")
+        raise RuntimeError(f"Number of classes in mask is not equal to reported no. of classes {np.unique(mask)}, {n_classes}.\nViolating mask: {path}")
 
-    mask = np.clip(mask, 0, max(n_classes))
+    mask = np.clip(mask, 0, n_classes)
     tensor = torch.tensor(mask, dtype=torch.long).unsqueeze(0)
 
     return mask, tensor
@@ -63,7 +63,7 @@ def save_visuals(save_dir, basename, image, pred_mask, gt_mask=None):
 def save_result(path, array):
     Image.fromarray(array).save(path)
 
-def evaluate_folder(model, img_dir, mask_dir, save_dir, num_classes, device, verbosity, resize=(256, 256)):
+def evaluate_folder(model, img_dir : str, mask_dir : str, save_dir : str, num_classes : int , device : str, verbosity : int, resize=(256, 256)):
     img_paths = sorted(Path(img_dir).glob("*.png"))
     mask_paths = sorted(Path(mask_dir).glob("*.png"))
 
@@ -84,7 +84,7 @@ def evaluate_folder(model, img_dir, mask_dir, save_dir, num_classes, device, ver
             basename = img_path.stem
 
             orig_img, img_tensor = load_image(img_path, resize)
-            gt_mask_img, gt_tensor = load_mask(mask_path, resize)
+            gt_mask_img, gt_tensor = load_mask(mask_path, num_classes, resize)
 
             img_tensor, gt_tensor = img_tensor.to(device), gt_tensor.to(device)
 
@@ -94,6 +94,7 @@ def evaluate_folder(model, img_dir, mask_dir, save_dir, num_classes, device, ver
             gt_np = gt_tensor.squeeze().cpu().numpy()
 
             pred_mask_img = decode_mask(pred_np, CLASS_COLORS)
+            gt_mask_img = decode_mask(gt_np, CLASS_COLORS)
 
             # Update metrics
             metrics.update(gt_np, pred_np)
@@ -191,31 +192,31 @@ def infer(model, encoder, checkpoint, num_classes, image, images, output, device
 @click.option("--model", required=True)
 @click.option("--encoder", required=True)
 @click.option("--checkpoint", required=True, type=click.Path(exists=True))
+@click.option("--num_classes", required=True, type=int)
 @click.option("--images", required=True, type=click.Path(exists=True))
 @click.option("--masks", required=True, type=click.Path(exists=True))
 @click.option("--output", default="eval_results")
 @click.option("--device", default="cuda")
 @click.option("--resize", default=(256,256), nargs=2, type=int)
 @click.option("--verbosity", "-v", count=True, help="Increase verbosity.")
-def evaluate(model, encoder, checkpoint, images, masks, output, device, resize, verbosity):
+def evaluate(model, encoder, checkpoint, num_classes, images, masks, output, device, resize, verbosity):
     if not os.path.isdir(masks): raise Exception(f"not valid folder: {masks}")
     if not os.path.isdir(images): raise Exception(f"not valid folder: {images}")
 
-    num_classes = len(COLOR_TO_CLASS)
     model = load_model(model, encoder, checkpoint, num_classes)
     model.to(device)
-
+    print(verbosity)
     verbose_header(verbosity, model, encoder, None, checkpoint)
 
     evaluate_folder(
-        model,
-        images,
-        masks,
-        output,
-        num_classes,
-        device,
-        resize,
-        verbosity,
+        model=model,
+        img_dir=images,
+        mask_dir=masks,
+        save_dir=output,
+        num_classes=num_classes,
+        device=device,
+        resize=resize,
+        verbosity=verbosity,
     )
 
     click.echo("Evaluation complete.")

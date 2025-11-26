@@ -156,6 +156,8 @@ def get_dataloader(
     }
 
     # default augmentations if caller didn't provide custom ones
+    # default mean: Tuple[float, float, float] = (0.485, 0.456, 0.406),
+    #         std:  Tuple[float, float, float] = (0.229, 0.224, 0.225),
     if train_transforms is None:
         train_transforms = A.Compose(
             [
