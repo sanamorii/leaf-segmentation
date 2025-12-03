@@ -289,7 +289,7 @@ def cli():
 @click.option("--batch_size", type=int, default=8)
 @click.option("--num_workers", type=int, default=4)
 @click.option("--lr", type=float, default=1e-3, help="Learning rate")
-@click.option("--epochs", type=int, default=50, help="Number of epochs to train on.")
+@click.option("--epochs", type=int, default=100, help="Number of epochs to train on.")
 @click.option("--device", default="cuda" if torch.cuda.is_available() else "cpu",
               help="Device to train the model on. Default is 'cuda' if available")
 @click.option("--resume", type=click.Path(exists=True), default=None,
