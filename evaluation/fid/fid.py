@@ -79,8 +79,9 @@ class MaskedImages(Dataset):
         img_np  = np.array(img).astype(np.uint8)
         mask_np = np.array(mask).astype(np.uint8)
 
-        fg = (mask_np != 0).astype(np.uint8) # foreground >= 1, background = 0
+        fg = (mask_np == 3).astype(np.uint8) # foreground >= 1, background = 0
         img_np_masked = img_np * fg[..., None]  # set background to zero (black)
+        
         img_masked = Image.fromarray(img_np_masked)
 
         return self.transform(img_masked)

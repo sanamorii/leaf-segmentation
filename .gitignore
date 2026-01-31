@@ -8,6 +8,10 @@ slurm-*.out
 **/*.pth
 results/
 results*/
+result/
+*.out
+logs/
+.*/
 
 .vscode/
 
