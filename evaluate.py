@@ -53,15 +53,51 @@ def load_mask(path : str, n_classes : int, resize : tuple=(256, 256)):
     return mask, tensor
 
 def save_visuals(save_dir, basename, image, pred_mask, gt_mask=None):
-    os.makedirs(save_dir, exist_ok=True)
+    os.makedirs(f"{save_dir}/predictions", exist_ok=True)
 
-    Image.fromarray(image).save(f"{save_dir}/{basename}_image.png")
-    Image.fromarray(pred_mask).save(f"{save_dir}/{basename}_pred.png")
+    Image.fromarray(image).save(f"{save_dir}/predictions/{basename}_image.png")
+    Image.fromarray(pred_mask).save(f"{save_dir}/predictions/{basename}_pred.png")
     if gt_mask is not None:
-        Image.fromarray(gt_mask).save(f"{save_dir}/{basename}_gt.png")
+        Image.fromarray(gt_mask).save(f"{save_dir}/predictions/{basename}_gt.png")
 
 def save_result(path, array):
     Image.fromarray(array).save(path)
+
+def display_report(ckpt: dict, metrics: StreamSegMetrics, output: str = None):
+    results = metrics.get_results()
+
+    lines = []
+    lines.append(f"RESULTS FOR")
+    lines.append("=" * 60)
+    lines.append("")
+
+    lines.append(f"Overall Accuracy : {results['Overall Acc']:.4f}")
+    lines.append(f"Mean Accuracy    : {results['Mean Acc']:.4f}")
+    lines.append(f"Mean IoU         : {results['Mean IoU']:.4f}")
+    lines.append(f"Mean Dice        : {results['Mean Dice']:.4f}")
+    lines.append(f"FreqW Acc        : {results['FreqW Acc']:.4f}")
+    lines.append("")
+
+    lines.append("Per-class IoU:")
+    for cls, val in results["Class IoU"].items():
+        lines.append(f"  Class {cls}: {val:.4f}")
+    lines.append("")
+
+    lines.append("Per-class Dice:")
+    for cls, val in results["Class Dice"].items():
+        lines.append(f"  Class {cls}: {val:.4f}")
+    lines.append("")
+
+    msg = "\n".join(lines)
+
+    print(msg)
+
+    if output is not None:
+        os.makedirs("results", exist_ok=True)
+        path = Path(output) / "results.txt"
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(msg)
+        print(f"Saved report to: {path}")
 
 def evaluate_folder(model, img_dir : str, mask_dir : str, save_dir : str, num_classes : int , device : str, verbosity : int, resize=(256, 256)):
     img_paths = sorted(Path(img_dir).glob("*.png"))
@@ -101,13 +137,8 @@ def evaluate_folder(model, img_dir : str, mask_dir : str, save_dir : str, num_cl
 
             # Save prediction, GT, input
             save_visuals(save_dir, basename, orig_img, pred_mask_img, gt_mask_img)
-    results = metrics.get_results()
-    print("Evaluation Results:")
-    print(f"Mean IoU           : {results['Mean IoU']:.4f}")
-    print(f"Dice Coefficient   : {results['Mean Dice']:.4f}")
-    print(f"Accuracy   : {results['Mean Acc']:.4f}")
-    print(metrics.to_str(results))
-    print("\n")
+    return metrics
+
 
 def infer_single(model, img_path, save_dir, device, resize=(256,256)):
     os.makedirs(save_dir, exist_ok=True)
@@ -195,7 +226,7 @@ def infer(model, encoder, checkpoint, num_classes, image, images, output, device
 @click.option("--num_classes", required=True, type=int)
 @click.option("--images", required=True, type=click.Path(exists=True))
 @click.option("--masks", required=True, type=click.Path(exists=True))
-@click.option("--output", default="eval_results")
+@click.option("--output", default="results")
 @click.option("--device", default="cuda")
 @click.option("--resize", default=(256,256), nargs=2, type=int)
 @click.option("--verbosity", "-v", count=True, help="Increase verbosity.")
@@ -208,7 +239,7 @@ def evaluate(model, encoder, checkpoint, num_classes, images, masks, output, dev
     print(verbosity)
     verbose_header(verbosity, model, encoder, None, checkpoint)
 
-    evaluate_folder(
+    metrics = evaluate_folder(
         model=model,
         img_dir=images,
         mask_dir=masks,
@@ -218,6 +249,8 @@ def evaluate(model, encoder, checkpoint, num_classes, images, masks, output, dev
         resize=resize,
         verbosity=verbosity,
     )
+
+    display_report(checkpoint, metrics, output=output)
 
     click.echo("Evaluation complete.")
 
