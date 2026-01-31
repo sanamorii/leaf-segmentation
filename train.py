@@ -45,6 +45,74 @@ def freeze_encoder(model):
     else:
         logger.warning("Model has no encoder - freezing unsuccessful")
 
+def unfreeze_encoder(model):
+    if hasattr(model, "encoder"):
+        for p in model.encoder.parameters():
+            p.requires_grad = True
+        logger.info("Encoder unfrozen")
+    else:
+        logger.warning("Model has no encoder - unfreeze unsuccessful")
+
+def _extract_state_dict(ckpt):
+    if isinstance(ckpt, dict):
+        for key in ("model_state", "state_dict", "model"):
+            if key in ckpt:
+                return ckpt[key]
+    return ckpt
+
+def load_pretrained_weights(model, ckpt_path, device, strict_load=False):
+    ckpt = load_ckpt(ckpt_path, map_location=device)
+    state_dict = _extract_state_dict(ckpt)
+
+    if strict_load:
+        model.load_state_dict(state_dict, strict=True)
+        logger.info("Loaded pretrained weights (strict) from %s", ckpt_path)
+        return
+
+    model_state = model.state_dict()
+    filtered = {}
+    skipped = []
+    for k, v in state_dict.items():
+        if k in model_state and v.shape == model_state[k].shape:
+            filtered[k] = v
+        else:
+            skipped.append(k)
+
+    missing_keys, unexpected_keys = model.load_state_dict(filtered, strict=False)
+    logger.info(
+        "Loaded %d/%d tensors from %s (skipped %d mismatched)",
+        len(filtered),
+        len(state_dict),
+        ckpt_path,
+        len(skipped),
+    )
+    if missing_keys:
+        logger.info("Missing keys after load: %s", missing_keys)
+    if unexpected_keys:
+        logger.info("Unexpected keys after load: %s", unexpected_keys)
+
+
+def build_finetune_optimiser(model, encoder_lr, decoder_lr, weight_decay):
+    enc_params = []
+    dec_params = []
+    for name, p in model.named_parameters():
+        if not p.requires_grad:
+            continue
+        if "encoder" in name:
+            enc_params.append(p)
+        else:
+            dec_params.append(p)
+
+    param_groups = []
+    if enc_params:
+        param_groups.append({"params": enc_params, "lr": encoder_lr})
+    if dec_params:
+        param_groups.append({"params": dec_params, "lr": decoder_lr})
+
+    if not param_groups:
+        raise RuntimeError("No trainable parameters found for finetuning.")
+    return torch.optim.AdamW(param_groups, lr=decoder_lr, weight_decay=weight_decay)
+
 
 def validate_epoch(
     model: SegmentationModel,
@@ -324,10 +392,108 @@ def train(model, encoder, dataset, num_classes, batch_size, num_workers, lr, epo
 
 
 @cli.command()
-def finetune(model, encoder, dataset, num_classes, batch_size, num_workers, lr, epochs, device, resume, use_amp):
+@click.option("--model", type=str, required=True, help="Name of the model to use.")
+@click.option("--encoder", type=str, required=True, help="Name of the encoder to use")
+@click.option("--dataset", type=str, required=True, help="Name of the dataset to use")
+@click.option("--num_classes", type=int, required=True, help="Number of semantic classes")
+@click.option("--batch_size", type=int, default=8)
+@click.option("--num_workers", type=int, default=4)
+@click.option("--lr", type=float, default=1e-4, help="Base learning rate for finetuning")
+@click.option("--epochs", type=int, default=50, help="Number of epochs to train on.")
+@click.option("--device", default="cuda" if torch.cuda.is_available() else "cpu",
+              help="Device to train the model on. Default is 'cuda' if available")
+@click.option("--ckpt", type=click.Path(exists=True), required=True,
+              help="Path to a pretrained checkpoint (model_state/state_dict/model)")
+@click.option("--freeze_encoder", "freeze_encoder_flag", is_flag=True, help="Freeze encoder for the entire finetuning run")
+@click.option("--freeze_epochs", type=int, default=0,
+              help="Freeze encoder for N epochs, then unfreeze for the remaining epochs")
+@click.option("--encoder_lr", type=float, default=None, help="Encoder LR (default: lr * 0.1)")
+@click.option("--decoder_lr", type=float, default=None, help="Decoder/head LR (default: lr)")
+@click.option("--weight_decay", type=float, default=1e-4)
+@click.option("--strict_load", is_flag=True, help="Require exact key/shape match when loading")
+@click.option("--use_amp", is_flag=True)
+def finetune(model, encoder, dataset, num_classes, batch_size, num_workers, lr, epochs, device, ckpt,
+             freeze_encoder_flag, freeze_epochs, encoder_lr, decoder_lr, weight_decay, strict_load, use_amp):
     train_loader, val_loader = get_dataloader(dataset, batch_size=batch_size, num_workers=num_workers, num_classes=num_classes)
+    model = setup_model(model, encoder, dataset, num_classes, device)
 
-    pass
+    # load pretrained weights (strict or shape-matched)
+    load_pretrained_weights(model, ckpt, device=device, strict_load=strict_load)
+
+    loss_fn = CEDiceLoss(ce_weight=0.5, dice_weight=0.5)
+
+    base_lr = lr
+    if encoder_lr is None:
+        encoder_lr = base_lr * 0.1
+    if decoder_lr is None:
+        decoder_lr = base_lr
+
+    # stage 1: optional frozen encoder
+    remaining_epochs = epochs
+    if freeze_epochs > 0:
+        freeze_epochs = min(freeze_epochs, epochs)
+        freeze_encoder_flag = True
+
+        if freeze_encoder_flag:
+            freeze_encoder(model)
+
+        optimiser = build_finetune_optimiser(
+            model=model,
+            encoder_lr=encoder_lr,
+            decoder_lr=decoder_lr,
+            weight_decay=weight_decay,
+        )
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimiser, mode='min', factor=0.5, patience=3)
+
+        train_loop(
+            model=model,
+            loss_fn=loss_fn,
+            optimiser=optimiser,
+            scheduler=scheduler,
+            train_loader=train_loader,
+            val_loader=val_loader,
+            epochs=freeze_epochs,
+            device=device,
+            num_classes=num_classes,
+            use_amp=use_amp,
+            gradient_clipping=0.1,
+            monitor_metric="Mean IoU",
+            start_epoch=0,
+        )
+        remaining_epochs = epochs - freeze_epochs
+        if remaining_epochs <= 0:
+            return
+
+        unfreeze_encoder(model)
+
+    # stage 2 (or single stage): full finetuning
+    if freeze_encoder_flag and freeze_epochs == 0:
+        freeze_encoder(model)
+
+    optimiser = build_finetune_optimiser(
+        model=model,
+        encoder_lr=encoder_lr,
+        decoder_lr=decoder_lr,
+        weight_decay=weight_decay,
+    )
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimiser, mode='min', factor=0.5, patience=3)
+
+    start_epoch = epochs - remaining_epochs
+    train_loop(
+        model=model,
+        loss_fn=loss_fn,
+        optimiser=optimiser,
+        scheduler=scheduler,
+        train_loader=train_loader,
+        val_loader=val_loader,
+        epochs=epochs,
+        device=device,
+        num_classes=num_classes,
+        use_amp=use_amp,
+        gradient_clipping=0.1,
+        monitor_metric="Mean IoU",
+        start_epoch=start_epoch,
+    )
 
 # CLI wrapper
 if __name__ == "__main__":
