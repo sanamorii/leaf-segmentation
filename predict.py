@@ -80,7 +80,7 @@ def infer_folder(model, img_dir, save_dir, device, resize=(256, 256), save_overl
 
 def get_model(name, encoder, weights, ckpt_path, num_classes):
     """Load trained model from checkpoint."""
-    model = modelling.get_model(name, encoder, weights, num_classes)
+    model = modelling.get_smp_model(name, encoder, weights, num_classes)
     weights_only = False
     checkpoint = torch.load(ckpt_path, map_location='cpu', weights_only=weights_only)
     if weights_only:

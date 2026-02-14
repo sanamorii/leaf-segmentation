@@ -172,7 +172,7 @@ def load_model(model_name, encoder, ckpt_path, num_classes, weights=None):
     weights_only = False
     checkpoint = torch.load(ckpt_path, map_location='cpu', weights_only=weights_only)
 
-    model = modelling.get_model(name=model_name, encoder=encoder, weights=weights, classes=num_classes)
+    model = modelling.get_smp_model(name=model_name, encoder=encoder, weights=weights, classes=num_classes)
 
     if weights_only:
         model.load_state_dict(checkpoint)

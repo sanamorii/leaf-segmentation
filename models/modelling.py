@@ -31,7 +31,7 @@ ENCODER_CHOICES = [
     "efficientnet-b7",
 ]
 
-def get_model(name: str, encoder: str, weights: str, classes: int):
+def get_smp_model(name: str, encoder: str, weights: str, classes: int):
     if name == "unetplusplus":
         return smp.UnetPlusPlus(
             encoder_name=encoder,
@@ -50,14 +50,6 @@ def get_model(name: str, encoder: str, weights: str, classes: int):
             in_channels=3,
             # decoder_channels=[128, 64, 32, 16, 8],  # [256, 128, 64, 32, 16]
             classes=classes,
-        )
-    elif name == "unetdropout":
-        return UNETDropout(
-            encoder_name=encoder,
-            encoder_weights=weights,
-            encoder_depth=5,
-            in_channels=3,
-            num_classes=classes,
         )
     elif name == "deeplabv3plus":
         return smp.DeepLabV3Plus(

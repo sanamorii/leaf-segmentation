@@ -30,7 +30,7 @@ from dataset.plantdreamer_semantic import get_dataloader
 from loss.cedice import CEDiceLoss
 from loss.earlystop import EarlyStopping
 from models.utils import create_ckpt, save_ckpt, load_ckpt
-from models.modelling import get_model
+from models.modelling import get_smp_model
 from metrics import StreamSegMetrics
 from segmentation.reporter.semantic import SemanticTrainingReporter
 from segmentation.utils.verbose import get_tqdm_bar, resolve_progress_flag
@@ -57,7 +57,7 @@ logger = logging.getLogger(__name__)
 
 def setup_model(model_name, encoder, dataset, num_classes, device):
     # create a simple model and optimizer
-    model = get_model(name=model_name, encoder=encoder, weights="imagenet", classes=num_classes)
+    model = get_smp_model(name=model_name, encoder=encoder, weights="imagenet", classes=num_classes)
     model.name = f"{model.__class__.__name__.lower()}-{encoder}-{dataset}"
     device = torch.device(device)
     return model.to(device)
@@ -344,10 +344,15 @@ def fit(
             scheduler.load_state_dict(ckpt["scheduler_state"])
         except Exception:
             logger.warning("Could not load scheduler state from checkpoint")
+
         cur_itrs = ckpt.get("cur_itrs", 0)
-        best_vloss = ckpt.get("val_stats", None)
-        best_score = ckpt.get("mean_val_iou", best_score)
-        start_epoch = int(ckpt.get("epoch", start_epoch))
+        start_epoch = int(ckpt.get("epoch", 0))
+
+        validation_stats = ckpt.get("validation_stats", None)
+        if validation_stats is not None:
+            best_vloss = validation_stats["loss_total"]   
+            best_score = validation_stats[monitor_metric]
+
         logger.info("Resumed training from %s (starting epoch=%d)", resume, start_epoch)
 
 

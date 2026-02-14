@@ -53,7 +53,7 @@ def create_ckpt(
         "optimizer_state": optimiser.state_dict(),
         "scheduler_state": scheduler.state_dict(),
         "training_stats": train_stats,
-        "val_stats": val_stats,
+        "validation_stats": val_stats,
         "num_classes": num_classes
     }
     if epoch is not None:
