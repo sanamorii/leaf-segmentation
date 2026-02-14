@@ -9,6 +9,7 @@ from tqdm import tqdm
 import segmentation_models_pytorch as smp
 import torchvision.transforms as T
 import albumentations as A
+import cv2
 
 from pathlib import Path
 from PIL import Image
@@ -57,17 +58,26 @@ def save_visuals(save_dir, basename, image, pred_mask, gt_mask=None):
 
     Image.fromarray(image).save(f"{save_dir}/predictions/{basename}_image.png")
     Image.fromarray(pred_mask).save(f"{save_dir}/predictions/{basename}_pred.png")
+    save_overlay(f"{save_dir}/predictions/{basename}_overlay.png", image, pred_mask)
     if gt_mask is not None:
         Image.fromarray(gt_mask).save(f"{save_dir}/predictions/{basename}_gt.png")
 
 def save_result(path, array):
     Image.fromarray(array).save(path)
 
-def display_report(ckpt: dict, metrics: StreamSegMetrics, output: str = None):
+def save_overlay(path, image, mask):
+    if mask.shape[:2] != image.shape[:2]:
+        mask = cv2.resize(mask, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_NEAREST)
+    if len(mask.shape) == 2:
+        mask = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
+    overlaid = overlay(image, mask)
+    Image.fromarray(overlaid).save(path)
+
+def display_report(ckpt: str, metrics: StreamSegMetrics, dataset: str, output: str = None):
     results = metrics.get_results()
 
     lines = []
-    lines.append(f"RESULTS FOR")
+    lines.append(f"RESULTS FOR {dataset} - {ckpt}")
     lines.append("=" * 60)
     lines.append("")
 
@@ -156,6 +166,7 @@ def infer_single(model, img_path, save_dir, device, resize=(256,256)):
     stem = Path(img_path).stem
     save_result(f"{save_dir}/{stem}_orig.png", orig)
     save_result(f"{save_dir}/{stem}_pred.png", pred_mask_img)
+    save_overlay(f"{save_dir}/{stem}_overlay.png", orig, pred_mask_img)
 
 def load_model(model_name, encoder, ckpt_path, num_classes, weights=None):
     weights_only = False
@@ -198,7 +209,7 @@ def cli():
 @click.option("--images", type=click.Path(exists=True))
 @click.option("--output", default="result", type=str)
 @click.option("--device", default="cuda")
-@click.option("--resize", default=(256,256), nargs=2, type=int)
+@click.option("--resize", default=(512,512), nargs=2, type=int)
 @click.option("--verbosity", "-v", count=True, help="Increase verbosity (-v, -vv, -vvv).")
 def infer(model, encoder, checkpoint, num_classes, image, images, output, device, resize, verbosity):
     model = load_model(model, encoder, checkpoint, num_classes)
@@ -224,16 +235,21 @@ def infer(model, encoder, checkpoint, num_classes, image, images, output, device
 @click.option("--encoder", required=True)
 @click.option("--checkpoint", required=True, type=click.Path(exists=True))
 @click.option("--num_classes", required=True, type=int)
-@click.option("--images", required=True, type=click.Path(exists=True))
-@click.option("--masks", required=True, type=click.Path(exists=True))
+@click.option("--dataset", required=True, type=click.Path(exists=True))
+# @click.option("--images", required=True, type=click.Path(exists=True))
+# @click.option("--masks", required=True, type=click.Path(exists=True))
 @click.option("--output", default="results")
 @click.option("--device", default="cuda")
-@click.option("--resize", default=(256,256), nargs=2, type=int)
+@click.option("--resize", default=(512,512), nargs=2, type=int)
 @click.option("--verbosity", "-v", count=True, help="Increase verbosity.")
-def evaluate(model, encoder, checkpoint, num_classes, images, masks, output, device, resize, verbosity):
-    if not os.path.isdir(masks): raise Exception(f"not valid folder: {masks}")
-    if not os.path.isdir(images): raise Exception(f"not valid folder: {images}")
-
+def evaluate(model, encoder, checkpoint, num_classes, dataset, output, device, resize, verbosity):
+    base = Path(dataset)
+    if (not base.exists() and
+        not base.is_dir() and
+        not (base / "gt").is_dir() and
+        not (base / "mask").is_dir()):
+        raise NotADirectoryError(f"given dataset path does not match required format (plantdreamer):\n{dataset}")
+                                 
     model = load_model(model, encoder, checkpoint, num_classes)
     model.to(device)
     print(verbosity)
@@ -241,8 +257,8 @@ def evaluate(model, encoder, checkpoint, num_classes, images, masks, output, dev
 
     metrics = evaluate_folder(
         model=model,
-        img_dir=images,
-        mask_dir=masks,
+        img_dir=str(base / "gt"),
+        mask_dir=str(base / "mask"),
         save_dir=output,
         num_classes=num_classes,
         device=device,
@@ -250,7 +266,7 @@ def evaluate(model, encoder, checkpoint, num_classes, images, masks, output, dev
         verbosity=verbosity,
     )
 
-    display_report(checkpoint, metrics, output=output)
+    display_report(checkpoint, metrics, dataset, output=output)
 
     click.echo("Evaluation complete.")
 

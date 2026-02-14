@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 import os
 import json
 import torch
@@ -57,7 +58,29 @@ CLASSES = {
 }
 
 
-def collect_all_data(base_dir: str, ext: str = "png") -> List[Tuple[str, str]]:
+def collect_from_dirs(gt_dir: Path, mask_dir: Path, ext: str = "png"):
+    """Helper to collect pairs from a single gt/mask directory pair."""
+    sub_pairs = []
+    if not gt_dir.exists() or not mask_dir.exists():
+        return sub_pairs
+
+    images = sorted([str(p) for p in gt_dir.glob(f"*.{ext}")])
+    masks = sorted([str(p) for p in mask_dir.glob(f"*.{ext}")])
+
+    # assuming 1-to-1 filename match
+    if len(images) != len(masks):
+        logger.warning("Mismatched counts in %s: images=%d masks=%d", gt_dir.parent, len(images), len(masks))
+        # continue to next subdir rather than asserting
+        return sub_pairs
+
+    for img_path, mask_path in zip(images, masks):
+        if Path(img_path).name != Path(mask_path).name:
+            logger.warning("Filename mismatch: %s vs %s", img_path, mask_path)
+            continue
+        sub_pairs.append((img_path, mask_path))
+    return sub_pairs
+
+def collect_all_data(base_dir: str, ext: str = "png") -> list[tuple[str, str]]:
     """Collect (image, mask) pairs under a base directory.
 
     Expects a structure like base_dir/<subdir>/gt/*.png and base_dir/<subdir>/mask/*.png
@@ -73,32 +96,10 @@ def collect_all_data(base_dir: str, ext: str = "png") -> List[Tuple[str, str]]:
 
     pairs: List[Tuple[str, str]] = []
 
-    def collect_from_dirs(gt_dir: Path, mask_dir: Path):
-        """Helper to collect pairs from a single gt/mask directory pair."""
-        sub_pairs = []
-        if not gt_dir.exists() or not mask_dir.exists():
-            return sub_pairs
-
-        images = sorted([str(p) for p in gt_dir.glob(f"*.{ext}")])
-        masks = sorted([str(p) for p in mask_dir.glob(f"*.{ext}")])
-
-        # assuming 1-to-1 filename match
-        if len(images) != len(masks):
-            logger.warning("Mismatched counts in %s: images=%d masks=%d", gt_dir.parent, len(images), len(masks))
-            # continue to next subdir rather than asserting
-            return sub_pairs
-
-        for img_path, mask_path in zip(images, masks):
-            if Path(img_path).name != Path(mask_path).name:
-                logger.warning("Filename mismatch: %s vs %s", img_path, mask_path)
-                continue
-            sub_pairs.append((img_path, mask_path))
-        return sub_pairs
-
     # case 1: flat structure (base_dir/gt and base_dir/mask)
     flat_gt = base / "gt"
     flat_mask = base / "mask"
-    pairs.extend(collect_from_dirs(flat_gt, flat_mask))
+    pairs.extend(collect_from_dirs(flat_gt, flat_mask, ext))
 
     # case 2: nested subdirectories (base_dir/<subdir>/gt, mask) 
     for subdir in base.iterdir():
@@ -106,12 +107,50 @@ def collect_all_data(base_dir: str, ext: str = "png") -> List[Tuple[str, str]]:
             continue
         gt_dir = subdir / "gt"
         mask_dir = subdir / "mask"
-        pairs.extend(collect_from_dirs(gt_dir, mask_dir))
+        pairs.extend(collect_from_dirs(gt_dir, mask_dir, ext))
 
     if len(pairs) == 0:
         logger.warning("No image/mask pairs found under %s", base_dir)
 
     return pairs
+
+@dataclass
+class SemanticDataset:
+    base_directory: str
+    train_set: list[tuple[str, str]]
+    test_set:  list[tuple[str, str]]
+    eval_set:  list[tuple[str, str]]
+
+# def get_dataset(dataset: str, config: Path = "data/datasets.json"):
+
+#     with config.open("r", encoding="utf-8") as f:
+#         data = json.load(f)
+
+#     cfg = data[dataset]
+#     num_classes = cfg["num_classes"]
+
+#     def _get(split):
+#         path = os.path.join(cfg["base"], cfg["split"]["train"])
+#         pairs = collect_all_data(path)
+#         return zip(*pairs)
+
+#     if isinstance(cfg["split"], dict):
+
+#         train_gt, train_mask = _get("train")
+#         train_dataset = PlantDreamerData(image_paths=train_gt, mask_paths=train_mask, n_classes=num_classes)
+
+#         test_gt, test_mask = _get("test")
+#         test_dataset = PlantDreamerData(image_paths=test_gt, mask_paths=test_mask, n_classes=num_classes)
+#         return train_dataset, test_dataset
+
+#     elif isinstance(cfg["split"], list):
+#         if len(cfg["split"]) != 2: raise Exception("incorrect traintest split")
+
+#         all_pairs = collect_all_data(cfg["base"])
+#         train_paths, val_paths = train_test_split(
+#             all_pairs, train_size=cfg["split"][0], test_size=cfg["split"][1], random_state=42, shuffle=True
+#         )
+#         train_
 
 
 def get_dataloader(
@@ -122,7 +161,7 @@ def get_dataloader(
     pin_memory: bool = False,
     shuffle: bool = True,
     base_dir: str = "./data/beans",
-    image_size: int = 256,
+    image_size: int = 512,
     mean: Tuple[float, float, float] = (0.485, 0.456, 0.406),
     std: Tuple[float, float, float] = (0.229, 0.224, 0.225),
     ext: str = "png",
@@ -148,6 +187,15 @@ def get_dataloader(
 
     # mapping of species identifiers to data folders (can be adjusted)
     species_dirs = {
+        "bean_semantic_real_train": "./data/bean_semantic_real/100",
+        "bean_semantic_real_train80": "./data/bean_semantic_real/80",
+        "bean_semantic_real_train75": "./data/bean_semantic_real/75",
+        "bean_semantic_real_train50": "./data/bean_semantic_real/50",
+        "bean_semantic_real_train25": "./data/bean_semantic_real/25",
+        "bean_semantic_real_train10": "./data/bean_semantic_real/10",
+        
+        "bean_semantic_synth_train": "./data/bean_semantic_synth_train",
+
         "bean_semantic": "./data/bean_semantic",
         "wheat_semantic": "./data/wheat_semantic",
         "kale_semantic": "./data/kale_semantic",
@@ -186,6 +234,12 @@ def get_dataloader(
         all_pairs = collect_all_data(species_base, ext=ext)
         if len(all_pairs) == 0:
             raise RuntimeError(f"No data found for species '{dataset}' in {species_base} for extension {ext}")
+
+        # # we use a percentage subset of the dataset if required - used for finetuning experiments
+        # if percen >= 1:
+        #     if shuffle: np.random.shuffle(all_pairs)
+        #     n = int(len(all_pairs) * percen)
+        #     all_pairs = allpairs[:n]
 
         train_paths, val_paths = train_test_split(
             all_pairs, test_size=0.2, random_state=seed, shuffle=shuffle
