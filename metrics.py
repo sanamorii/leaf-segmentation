@@ -1,4 +1,6 @@
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Literal, Optional, Sequence
 import numpy as np
 
 @dataclass
@@ -36,7 +38,37 @@ class StreamSegMetrics:
             minlength=self.n_classes ** 2,
         ).reshape(self.n_classes, self.n_classes)
         return hist
+    
 
+    def get_confusion(self, normalise: Literal["true", "pred", "all"]) -> np.ndarray:
+        """return normalised confusion matrix
+
+        Args:
+            normalise: normalise to 0-1
+                - None: raw counts
+                - "true": row-normalised (per GT class; rows sum to 1)
+                - "pred": col-normalised (per predicted class; cols sum to 1)
+                - "all" : global-normalised (sum to 1)
+
+        Returns:
+            np.ndarray: normalised 
+        """
+
+        cm = self.confusion_matrix.astype(np.float64, copy=True)
+
+        if normalise is None:
+            return cm
+    
+        eps = 1e-12
+        if normalise == "true":
+            cm /= (cm.sum(axis=1, keepdims=True) + eps)
+        elif normalise == "pred":
+            cm /= (cm.sum(axis=0, keepdims=True) + eps)
+        elif normalise == "all":
+            cm /= (cm.sum() + eps)
+        else:
+            raise ValueError(f"normalise must be one of None/'true'/'pred'/'all', got {normalise!r}")
+        
     def get_results(self):
         """Returns accuracy score evaluation result.
             - overall accuracy
