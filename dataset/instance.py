@@ -13,6 +13,7 @@ import cv2
 
 
 class LeafDataset(Dataset):
+    """PlantDreamer instance segmentation dataset. Takes raw plantdreamer format and internally converts to COCO"""
     def __init__(self, img_dir, mask_dir, category_json_path, transforms=None, leaf_only=True):
         self.img_dir = img_dir
         self.mask_dir = mask_dir

@@ -1,10 +1,15 @@
-from torchvision.models.detection import maskrcnn_resnet50_fpn
+from torchvision.models.detection import (
+    maskrcnn_resnet50_fpn,
+    MaskRCNN_ResNet50_FPN_Weights,
+)
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
 from torchvision.models.detection.mask_rcnn import MaskRCNNPredictor
 
 def get_model(num_classes):
     # Load pre-trained Mask R-CNN
-    model = maskrcnn_resnet50_fpn(pretrained=True)
+    model = maskrcnn_resnet50_fpn(
+        weights=MaskRCNN_ResNet50_FPN_Weights.DEFAULT
+    )
     # Get number of input features for the classifier
     in_features = model.roi_heads.box_predictor.cls_score.in_features
     # Replace box predictor with new one (num_classes includes background)
@@ -16,4 +21,3 @@ def get_model(num_classes):
     model.roi_heads.mask_predictor = MaskRCNNPredictor(in_features_mask, hidden_layer, num_classes)
     
     return model
-

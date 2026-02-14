@@ -1,5 +1,4 @@
 import segmentation_models_pytorch as smp
-from .unetdropout import UNETDropout
 
 MODEL_CHOICES = [
     "segformer",

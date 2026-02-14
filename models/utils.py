@@ -1,18 +1,49 @@
 import os
-import torch
+from pathlib import Path
+from typing import Any, Dict
 import logging
+
+import torch
+import torch.nn as nn
+from torch.optim import Optimizer
+from torch.cuda.amp import GradScaler
+from torch.utils.data import DataLoader
+from torch.optim.lr_scheduler import LRScheduler
+
+import random
+import numpy as np
 
 from segmentation_models_pytorch.base.model import SegmentationModel
 
+def _get_rng_state() -> Dict[str, Any]:
+    state = {
+        'python': random.getstate(),
+        'numpy': np.random.get_state(),
+        'torch': torch.get_rng_state(),
+    }
+
+    if torch.cuda.is_available():
+        state['torch_cuda_all'] = torch.cuda.get_rng_state_all()
+    return state
+
+def _set_rng_state(state: Dict[str, Any]) -> None:
+    if "python" in state:
+        random.setstate(state["python"])
+    if "numpy" in state:
+        np.random.set_state(state["numpy"])
+    if "torch" in state:
+        torch.set_rng_state(state["torch"])
+    if torch.cuda.is_available() and "torch_cuda_all" in state:
+        torch.cuda.set_rng_state_all(state["torch_cuda_all"])
+
 def create_ckpt(
     cur_itrs: int, 
-    model : SegmentationModel, 
+    model : nn.Module, 
     num_classes : int,
     optimiser, 
     scheduler, 
-    tloss, 
-    vloss, 
-    vscore, 
+    train_stats: Dict[Any, Any],
+    val_stats: Dict[Any, Any],
     epoch: int = None
 ):
     ckpt = {
@@ -21,13 +52,8 @@ def create_ckpt(
         "model_state": model.state_dict(),
         "optimizer_state": optimiser.state_dict(),
         "scheduler_state": scheduler.state_dict(),
-        "validation_loss": vloss,
-        "training_loss": tloss,
-        "overall_val_acc": vscore["Overall Acc"],
-        "mean_val_acc": vscore["Mean Acc"],
-        "freqw_val_acc": vscore["FreqW Acc"],
-        "mean_val_iou": vscore["Mean IoU"],
-        "class_val_iou": vscore["Class IoU"],
+        "training_stats": train_stats,
+        "val_stats": val_stats,
         "num_classes": num_classes
     }
     if epoch is not None:
@@ -51,3 +77,24 @@ def load_ckpt(path, map_location=None):
     ckpt = torch.load(path, map_location=map_location)
     logging.getLogger(__name__).info("Loaded checkpoint %s", path)
     return ckpt
+
+
+def create_maskrcnn_ckpt(
+        model: nn.Module,
+        optimiser: Optimizer,
+        scheduler: LRScheduler | None,
+        scaler: GradScaler | None,
+        epoch: int,
+        train_stats: dict,
+        val_stats: dict,
+):
+    return {
+        "epoch": epoch,
+        "model_name": f"maskrcnn",
+        "model_state": model.state_dict(),
+        "optimiser": optimiser.state_dict(),
+        "scheduler": scheduler.state_dict() if scheduler is not None else None,
+        "scaler": scaler.state_dict() if scaler is not None else None,
+        "train_stats": train_stats,
+        "val_stats": val_stats, 
+    }

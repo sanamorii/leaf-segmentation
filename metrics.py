@@ -1,4 +1,15 @@
+from dataclasses import dataclass
 import numpy as np
+
+@dataclass
+class SegMetrics:
+    overall_acc: float
+    mean_acc: float
+    mean_iou: float
+    mean_dice: float
+    fwavacc: float
+    class_dice: dict[int, float]
+    class_iou: dict[int, float]
 
 # VainF DeepLabv3Plus thing metrics
 class StreamSegMetrics:
@@ -59,14 +70,24 @@ class StreamSegMetrics:
 
         cls_dice = dict(zip(range(self.n_classes), dice))
 
+        # return SegMetrics(
+        #     overall_acc=acc,
+        #     mean_acc=acc_cls,
+        #     fwavacc=fwavacc,
+        #     mean_iou=mean_iu,
+        #     mean_dice=mean_dice,
+        #     class_dice=cls_dice,
+        #     class_iou=cls_dice
+        # )
+
         return {
-            "Overall Acc": acc,
-            "Mean Acc": acc_cls,
-            "FreqW Acc": fwavacc,
-            "Mean IoU": mean_iu,
-            "Class IoU": cls_iu,
-            "Mean Dice": mean_dice,
-            "Class Dice": cls_dice,
+            "overall_acc": acc,
+            "mean_acc": acc_cls,
+            "fwavcc": fwavacc,
+            "mean_iou": mean_iu,
+            "mean_dice": mean_dice,
+            "class_dice": cls_dice,
+            "class_iou": cls_iu,
         }
 
     def reset(self):
