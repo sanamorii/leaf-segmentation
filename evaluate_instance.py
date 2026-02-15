@@ -11,9 +11,9 @@ import cv2
 from PIL import Image
 from tqdm import tqdm
 
-from dataset.plantdreamer_instance import LeafCoco
-from models.maskrcnn_torch import get_model as get_maskrcnn
-from models.utils import load_ckpt
+from leaf_seg.dataset.plantdreamer_instance import LeafCoco
+from leaf_seg.models.maskrcnn_torch import get_model as get_maskrcnn
+from leaf_seg.models.utils import load_ckpt
 
 # configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
@@ -50,6 +50,22 @@ def _resize_sample(img_t: torch.Tensor, masks_t: torch.Tensor, resize: tuple[int
         ).squeeze(0).to(torch.uint8)
 
     return img_t, masks_t
+
+
+def _load_image_for_inference(path: str, resize: tuple[int, int] | None):
+    image = Image.open(path).convert("RGB")
+    orig = np.array(image)
+
+    if resize is None:
+        proc = orig
+    else:
+        proc = np.array(
+            image.resize((resize[1], resize[0]), resample=Image.BILINEAR),
+            dtype=np.uint8,
+        )
+
+    tensor = torch.from_numpy(proc).permute(2, 0, 1).float() / 255.0
+    return orig, tensor
 
 
 def mask_iou(a: np.ndarray, b: np.ndarray):
@@ -102,6 +118,58 @@ def _mask_to_box(mask: np.ndarray) -> list[int]:
 
 def _boxes_from_masks(masks: list[np.ndarray]) -> list[list[int]]:
     return [_mask_to_box(mask) for mask in masks]
+
+
+def _extract_predictions(output: dict, score_thresh: float):
+    pred_masks = output["masks"].detach().cpu().numpy()
+    pred_masks = pred_masks[:, 0] if pred_masks.ndim == 4 else pred_masks
+    pred_labels = output["labels"].detach().cpu().numpy().tolist()
+    pred_scores = output["scores"].detach().cpu().numpy().tolist()
+    pred_boxes = output["boxes"].detach().cpu().numpy().tolist()
+
+    filtered_masks = []
+    filtered_labels = []
+    filtered_boxes = []
+    for pm, pl, ps, pb in zip(pred_masks, pred_labels, pred_scores, pred_boxes):
+        if ps < score_thresh:
+            continue
+        if pl == 0:
+            continue
+        filtered_masks.append((pm >= 0.5).astype(np.uint8))
+        filtered_labels.append(int(pl))
+        filtered_boxes.append([int(v) for v in pb])
+
+    return filtered_masks, filtered_labels, filtered_boxes
+
+
+def _project_predictions_to_size(
+    masks: list[np.ndarray],
+    boxes: list[list[int]],
+    src_hw: tuple[int, int],
+    dst_hw: tuple[int, int],
+):
+    src_h, src_w = src_hw
+    dst_h, dst_w = dst_hw
+    if src_h == dst_h and src_w == dst_w:
+        return masks, boxes
+
+    sx = dst_w / src_w
+    sy = dst_h / src_h
+
+    resized_masks = []
+    resized_boxes = []
+    for mask, box in zip(masks, boxes):
+        m = cv2.resize(mask.astype(np.uint8), (dst_w, dst_h), interpolation=cv2.INTER_NEAREST)
+        resized_masks.append((m > 0).astype(np.uint8))
+
+        x0, y0, x1, y1 = box
+        x0 = int(np.clip(round(x0 * sx), 0, dst_w - 1))
+        x1 = int(np.clip(round(x1 * sx), 0, dst_w - 1))
+        y0 = int(np.clip(round(y0 * sy), 0, dst_h - 1))
+        y1 = int(np.clip(round(y1 * sy), 0, dst_h - 1))
+        resized_boxes.append([x0, y0, x1, y1])
+
+    return resized_masks, resized_boxes
 
 
 def _draw_label(
@@ -222,6 +290,45 @@ def load_model(checkpoint_path: str, num_classes: int, device: str):
     return model
 
 
+def infer_single(
+    model,
+    image_path: str,
+    save_dir: str,
+    device: str,
+    resize=None,
+    score_thresh=0.5,
+):
+    os.makedirs(save_dir, exist_ok=True)
+
+    orig_img, img_t = _load_image_for_inference(image_path, resize)
+    in_h, in_w = int(img_t.shape[1]), int(img_t.shape[2])
+    out_h, out_w = int(orig_img.shape[0]), int(orig_img.shape[1])
+
+    with torch.no_grad():
+        output = model([img_t.to(device)])[0]
+
+    pred_masks, pred_labels, pred_boxes = _extract_predictions(output, score_thresh)
+    pred_masks, pred_boxes = _project_predictions_to_size(
+        pred_masks,
+        pred_boxes,
+        src_hw=(in_h, in_w),
+        dst_hw=(out_h, out_w),
+    )
+
+    save_visuals(
+        save_dir=save_dir,
+        basename=Path(image_path).stem,
+        image=orig_img,
+        pred_masks=pred_masks,
+        pred_labels=pred_labels,
+        pred_boxes=pred_boxes,
+        gt_masks=None,
+        gt_labels=None,
+        gt_boxes=None,
+        label_map={},
+    )
+
+
 def evaluate_dataset(
     model,
     dataset_root: str,
@@ -271,23 +378,9 @@ def evaluate_dataset(
             outputs = model([img_tensor])
             output = outputs[0]
 
-            pred_masks = output["masks"].detach().cpu().numpy()
-            pred_masks = pred_masks[:, 0] if pred_masks.ndim == 4 else pred_masks
-            pred_labels = output["labels"].detach().cpu().numpy().tolist()
-            pred_scores = output["scores"].detach().cpu().numpy().tolist()
-            pred_boxes = output["boxes"].detach().cpu().numpy().tolist()
-
-            filtered_masks = []
-            filtered_labels = []
-            filtered_boxes = []
-            for pm, pl, ps, pb in zip(pred_masks, pred_labels, pred_scores, pred_boxes):
-                if ps < score_thresh:
-                    continue
-                if pl == 0:
-                    continue
-                filtered_masks.append((pm >= 0.5).astype(np.uint8))
-                filtered_labels.append(int(pl))
-                filtered_boxes.append([int(v) for v in pb])
+            filtered_masks, filtered_labels, filtered_boxes = _extract_predictions(
+                output, score_thresh
+            )
 
             gt_masks_np = target["masks"].detach().cpu().numpy()
             gt_labels = target["labels"].detach().cpu().numpy().tolist()
@@ -372,8 +465,63 @@ def print_report(results: dict, output: str | None):
 
 @click.group()
 def cli():
-    """Instance segmentation evaluation (Mask R-CNN)"""
+    """Instance segmentation inference or evaluation (Mask R-CNN)"""
     pass
+
+
+@cli.command()
+@click.option("--checkpoint", required=True, type=click.Path(exists=True))
+@click.option("--num_classes", required=True, type=int)
+@click.option("--image", type=click.Path(exists=True))
+@click.option("--images", type=click.Path(exists=True))
+@click.option("--output", default="result_instance", type=str)
+@click.option("--device", default="cuda")
+@click.option("--resize", default=(512, 512), nargs=2, type=int)
+@click.option("--score_thresh", default=0.5, type=float)
+@click.option("--verbosity", "-v", count=True, help="Increase verbosity.")
+def infer(
+    checkpoint,
+    num_classes,
+    image,
+    images,
+    output,
+    device,
+    resize,
+    score_thresh,
+    verbosity,
+):
+    model = load_model(checkpoint, num_classes, device)
+    resize = tuple(resize) if resize is not None else None
+    out_dir = Path(output) / "inference"
+
+    if image:
+        infer_single(
+            model=model,
+            image_path=str(image),
+            save_dir=str(out_dir),
+            device=device,
+            resize=resize,
+            score_thresh=score_thresh,
+        )
+        click.echo(f"Saved inference results for {image} -> {output}")
+        return
+
+    if images:
+        paths = sorted(Path(images).glob("*.png"))
+        loader = tqdm(paths, desc="Inferring") if verbosity > 0 else paths
+        for img_path in loader:
+            infer_single(
+                model=model,
+                image_path=str(img_path),
+                save_dir=str(out_dir),
+                device=device,
+                resize=resize,
+                score_thresh=score_thresh,
+            )
+        click.echo(f"Saved inference results for folder {images} -> {output}")
+        return
+
+    raise click.UsageError("Provide either --image or --images")
 
 
 @cli.command()

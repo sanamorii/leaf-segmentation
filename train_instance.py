@@ -3,6 +3,7 @@ import datetime
 import time
 from pathlib import Path
 import click
+import logging
 
 import numpy as np
 
@@ -20,11 +21,93 @@ from torch.optim import Optimizer
 from pycocotools.cocoeval import COCOeval
 from pycocotools import mask as mask_utils
 
-from dataset.plantdreamer_instance import get_dataloader
-from models.maskrcnn_torch import get_model as get_maskrcnn
-from models.utils import create_maskrcnn_ckpt, save_ckpt
-from segmentation.reporter.instance import InstanceTrainingReporter
-from segmentation.utils.verbose import get_tqdm_bar, resolve_progress_flag, suppress_stout
+from leaf_seg.dataset.plantdreamer_instance import get_dataloader
+from leaf_seg.models.maskrcnn_torch import get_model as get_maskrcnn
+from leaf_seg.models.utils import create_maskrcnn_ckpt, save_ckpt, load_ckpt
+from leaf_seg.reporter.instance import InstanceTrainingReporter
+from leaf_seg.common.verbose import get_tqdm_bar, resolve_progress_flag, suppress_stout
+
+logger = logging.getLogger(__name__)
+
+
+def _extract_state_dict(ckpt):
+    if isinstance(ckpt, dict):
+        for key in ("model_state", "state_dict", "model"):
+            if key in ckpt:
+                return ckpt[key]
+    return ckpt
+
+
+def load_pretrained_weights(model, ckpt_path, device, strict_load=False):
+    ckpt = load_ckpt(ckpt_path, map_location=device)
+    state_dict = _extract_state_dict(ckpt)
+
+    if strict_load:
+        model.load_state_dict(state_dict, strict=True)
+        logger.info("Loaded pretrained weights (strict) from %s", ckpt_path)
+        return
+
+    model_state = model.state_dict()
+    filtered = {}
+    skipped = []
+    for key, value in state_dict.items():
+        if key in model_state and value.shape == model_state[key].shape:
+            filtered[key] = value
+        else:
+            skipped.append(key)
+
+    missing_keys, unexpected_keys = model.load_state_dict(filtered, strict=False)
+    logger.info(
+        "Loaded %d/%d tensors from %s (skipped %d mismatched)",
+        len(filtered),
+        len(state_dict),
+        ckpt_path,
+        len(skipped),
+    )
+    if missing_keys:
+        logger.info("Missing keys after load: %s", missing_keys)
+    if unexpected_keys:
+        logger.info("Unexpected keys after load: %s", unexpected_keys)
+
+
+def freeze_backbone(model: nn.Module):
+    for param in model.backbone.parameters():
+        param.requires_grad = False
+    logger.info("Backbone frozen")
+
+
+def unfreeze_backbone(model: nn.Module):
+    for param in model.backbone.parameters():
+        param.requires_grad = True
+    logger.info("Backbone unfrozen")
+
+
+def build_finetune_optimiser(
+    model: nn.Module,
+    backbone_lr: float,
+    head_lr: float,
+    weight_decay: float,
+) -> Optimizer:
+    backbone_params = []
+    head_params = []
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+        if name.startswith("backbone."):
+            backbone_params.append(param)
+        else:
+            head_params.append(param)
+
+    param_groups = []
+    if backbone_params:
+        param_groups.append({"params": backbone_params, "lr": backbone_lr})
+    if head_params:
+        param_groups.append({"params": head_params, "lr": head_lr})
+
+    if not param_groups:
+        raise RuntimeError("No trainable parameters found for finetuning.")
+
+    return torch.optim.AdamW(param_groups, lr=head_lr, weight_decay=weight_decay)
 
 def _to_numpy(x):
     if isinstance(x, torch.Tensor):
@@ -164,12 +247,6 @@ def validate_epoch(
     start = time.time()
     model.eval()
     coco_results = []
-    running = {
-        "loss_total": 0.0,
-        "loss_classifier": 0.0,
-        "loss_box_reg": 0.0,
-        "loss_mask": 0.0,
-    }
 
     dataset = _resolve_loader_dataset(loader)
     base_dataset = _unwrap_dataset(dataset)
@@ -219,12 +296,6 @@ def validate_epoch(
                     res["segmentation"] = _mask_to_rle(bin_mask)
 
                 coco_results.append(res)
-
-        running["loss_total"] = float(sum(outputs.values()).item())
-        for k in running.keys():
-            if k != "loss_total" and k in outputs:
-                running[k] += float(outputs[k].item())
-
 
         if hasattr(loader, "set_postfix"):
             loader.set_postfix({"detections": len(coco_results)})
@@ -284,6 +355,8 @@ def fit(
     val_score_thresh: float = 0.05,
     progress: bool = False,
     reporter: InstanceTrainingReporter | None = None,
+    start_epoch: int = 0,
+    save: bool = True,
 ):
     device = torch.device(device) if not isinstance(device, torch.device) else device
     model.to(device)
@@ -295,7 +368,7 @@ def fit(
     best_metric = float("-inf") if higher_is_better else float("inf")
     best_epoch = -1
 
-    for epoch in range(1, epochs + 1):
+    for epoch in range(start_epoch + 1, epochs + 1):
 
         train_stats = train_epoch(
             model=model,
@@ -323,23 +396,24 @@ def fit(
 
         current = float(val_stats.get(metric_to_track, 0.0))
         is_best = (current > best_metric) if higher_is_better else (current < best_metric)
-        ckpt = create_maskrcnn_ckpt(
-            model=model,
-            optimiser=optimiser,
-            scheduler=scheduler,
-            scaler=scaler,
-            epoch=epoch,
-            train_stats=train_stats,
-            val_stats=val_stats,
-        )
+        if save:
+            ckpt = create_maskrcnn_ckpt(
+                model=model,
+                optimiser=optimiser,
+                scheduler=scheduler,
+                scaler=scaler,
+                epoch=epoch,
+                train_stats=train_stats,
+                val_stats=val_stats,
+            )
 
-        if is_best:
-            best_metric = current
-            best_epoch = epoch
-            save_ckpt(ckpt, str(directory / f"{model.name}-{epochs}_best.pth"))
+            if is_best:
+                best_metric = current
+                best_epoch = epoch
+                save_ckpt(ckpt, str(directory / f"{model.name}-{epochs}_best.pth"))
 
-        if (epoch % save_every) == 0:
-            save_ckpt(ckpt, str(directory / f"{model.name}-{epochs}_current.pth"))
+            if (epoch % save_every) == 0:
+                save_ckpt(ckpt, str(directory / f"{model.name}-{epochs}_current.pth"))
 
         lr = optimiser.param_groups[0]["lr"]
         print(
@@ -396,7 +470,7 @@ def cli():
 @cli.command()
 @click.option("--dataset", type=str, required=True, help="Name of the dataset to use (passed into get_dataloader)")
 @click.option("--num_classes", type=int, default=2, show_default=True, help="Includes background. Leaf-only => 2.")
-@click.option("--batch_size", type=int, default=2, show_default=True)
+@click.option("--batch_size", type=int, default=8, show_default=True)
 @click.option("--num_workers", type=int, default=4, show_default=True)
 @click.option("--lr", type=float, default=1e-4, show_default=True)
 @click.option("--epochs", type=int, default=30, show_default=True)
@@ -479,6 +553,167 @@ def train(
         val_score_thresh=val_score_thresh,
         progress=progress_enabled,
         reporter=reporter,
+    )
+
+
+@cli.command()
+@click.option("--dataset", type=str, required=True, help="Name of the dataset to use (passed into get_dataloader)")
+@click.option("--num_classes", type=int, default=2, show_default=True, help="Includes background. Leaf-only => 2.")
+@click.option("--batch_size", type=int, default=8, show_default=True)
+@click.option("--num_workers", type=int, default=4, show_default=True)
+@click.option("--lr", type=float, default=1e-4, show_default=True, help="Base learning rate for finetuning")
+@click.option("--epochs", type=int, default=30, show_default=True)
+@click.option("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+@click.option("--ckpt", type=click.Path(exists=True), required=True, help="Path to pretrained checkpoint")
+@click.option("--freeze_backbone", "freeze_backbone_flag", is_flag=True, help="Freeze backbone for the entire finetuning run")
+@click.option("--freeze_epochs", type=int, default=0, show_default=True, help="Freeze backbone for N epochs, then unfreeze")
+@click.option("--backbone_lr", type=float, default=None, help="Backbone LR (default: lr * 0.1)")
+@click.option("--head_lr", type=float, default=None, help="Head LR (default: lr)")
+@click.option("--weight_decay", type=float, default=1e-4, show_default=True)
+@click.option("--strict_load", is_flag=True, help="Require exact key/shape match when loading")
+@click.option("--use_amp", is_flag=True, help="Enable AMP (CUDA only).")
+@click.option("--gradient_clipping", type=float, default=1.0, show_default=True)
+@click.option("--val_score_thresh", type=float, default=0.05, show_default=True)
+@click.option("--progress/--no-progress", default=None, help="Enable/disable tqdm progress bars (default: auto based on TTY).")
+@click.option("--no_report", is_flag=True, help="Disable epoch reporter output.")
+@click.option("--report_every", type=int, default=1, show_default=True, help="Write plots every N epochs.")
+@click.option("-o", "--out", type=click.Path(), default="checkpoints/maskrcnn-fn", show_default=True, help="Checkpoint/report output directory.")
+def finetune(
+    dataset: str,
+    num_classes: int,
+    batch_size: int,
+    num_workers: int,
+    lr: float,
+    epochs: int,
+    device: str,
+    ckpt: str,
+    freeze_backbone_flag: bool,
+    freeze_epochs: int,
+    backbone_lr: float | None,
+    head_lr: float | None,
+    weight_decay: float,
+    strict_load: bool,
+    use_amp: bool,
+    gradient_clipping: float,
+    val_score_thresh: float,
+    progress: bool | None,
+    no_report: bool,
+    report_every: int,
+    out: str,
+):
+    progress_enabled = resolve_progress_flag(progress)
+    train_loader, val_loader = get_dataloader(
+        dataset=dataset,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        shuffle=True,
+        pin_memory=True,
+    )
+
+    model = setup_maskrcnn(num_classes=num_classes, dataset=dataset, device=device)
+    model.name = f"{model.name}_fn"
+    load_pretrained_weights(model, ckpt_path=ckpt, device=device, strict_load=strict_load)
+
+    reporter = None
+    if not no_report:
+        reporter = build_reporter(
+            report_name=f"maskrcnn-{dataset}-instance-finetune-report",
+            report_dir=out,
+            report_every=report_every,
+            model=model.name,
+            dataset=dataset,
+            num_classes=num_classes,
+            batch_size=batch_size,
+            num_workers=num_workers,
+            lr=lr,
+            epochs=epochs,
+            device=str(device),
+            ckpt=ckpt,
+            strict_load=bool(strict_load),
+            freeze_backbone=bool(freeze_backbone_flag),
+            freeze_epochs=freeze_epochs,
+            backbone_lr=backbone_lr,
+            head_lr=head_lr,
+            use_amp=bool(use_amp),
+            gradient_clipping=gradient_clipping,
+            val_score_thresh=val_score_thresh,
+        )
+
+    if backbone_lr is None:
+        backbone_lr = lr * 0.1
+    if head_lr is None:
+        head_lr = lr
+
+    remaining_epochs = epochs
+    if freeze_epochs > 0:
+        freeze_epochs = min(freeze_epochs, epochs)
+        freeze_backbone_flag = True
+
+        if freeze_backbone_flag:
+            freeze_backbone(model)
+
+        optimiser = build_finetune_optimiser(
+            model=model,
+            backbone_lr=backbone_lr,
+            head_lr=head_lr,
+            weight_decay=weight_decay,
+        )
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimiser, mode="max", factor=0.5, patience=3
+        )
+
+        fit(
+            model=model,
+            optimiser=optimiser,
+            scheduler=scheduler,
+            train_loader=train_loader,
+            val_loader=val_loader,
+            epochs=freeze_epochs,
+            device=device,
+            use_amp=use_amp,
+            out_dir=out,
+            clip_grad_norm=gradient_clipping,
+            val_score_thresh=val_score_thresh,
+            progress=progress_enabled,
+            reporter=reporter,
+            save=freeze_epochs >= epochs,
+        )
+        remaining_epochs = epochs - freeze_epochs
+        if remaining_epochs <= 0:
+            return
+
+        unfreeze_backbone(model)
+
+    if freeze_backbone_flag and freeze_epochs == 0:
+        freeze_backbone(model)
+
+    optimiser = build_finetune_optimiser(
+        model=model,
+        backbone_lr=backbone_lr,
+        head_lr=head_lr,
+        weight_decay=weight_decay,
+    )
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimiser, mode="max", factor=0.5, patience=3
+    )
+
+    start_epoch = epochs - remaining_epochs
+    fit(
+        model=model,
+        optimiser=optimiser,
+        scheduler=scheduler,
+        train_loader=train_loader,
+        val_loader=val_loader,
+        epochs=epochs,
+        device=device,
+        use_amp=use_amp,
+        out_dir=out,
+        clip_grad_norm=gradient_clipping,
+        val_score_thresh=val_score_thresh,
+        progress=progress_enabled,
+        reporter=reporter,
+        start_epoch=start_epoch,
+        save=True,
     )
 
 if __name__ == "__main__":
