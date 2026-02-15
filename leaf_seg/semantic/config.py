@@ -1,8 +1,6 @@
 from dataclasses import dataclass
-import 
 
 from leaf_seg.common.torch_utils import get_default_device
-
 
 
 @dataclass

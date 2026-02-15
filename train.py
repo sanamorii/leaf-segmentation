@@ -25,15 +25,15 @@ import segmentation_models_pytorch as smp
 import segmentation_models_pytorch.losses as smp_losses
 from segmentation_models_pytorch.base.model import SegmentationModel
 
-from dataset.utils import rgb_to_class
-from dataset.plantdreamer_semantic import get_dataloader
-from loss.cedice import CEDiceLoss
-from loss.earlystop import EarlyStopping
-from models.utils import create_ckpt, save_ckpt, load_ckpt
-from models.modelling import get_smp_model
-from metrics import StreamSegMetrics
-from segmentation.reporter.semantic import SemanticTrainingReporter
-from segmentation.utils.verbose import get_tqdm_bar, resolve_progress_flag
+from leaf_seg.dataset.utils import rgb_to_class
+from leaf_seg.dataset.plantdreamer_semantic import get_dataloader
+from leaf_seg.common.loss.cedice import CEDiceLoss
+from leaf_seg.common.loss.earlystop import EarlyStopping
+from leaf_seg.models.utils import create_ckpt, save_ckpt, load_ckpt
+from leaf_seg.models.modelling import get_smp_model
+from leaf_seg.semantic.metrics import StreamSegMetrics
+from leaf_seg.reporter.semantic import SemanticTrainingReporter
+from leaf_seg.common.verbose import get_tqdm_bar, resolve_progress_flag
 
 MetricLiterals = Literal[
     "overall_acc", 

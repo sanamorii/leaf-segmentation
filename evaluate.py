@@ -15,11 +15,11 @@ from pathlib import Path
 from PIL import Image
 from torchmetrics.segmentation import MeanIoU, DiceScore, HausdorffDistance
 
-from metrics import StreamSegMetrics
-from models import modelling
-from models.modelling import ENCODER_CHOICES, MODEL_CHOICES
-from dataset.utils import decode_mask, overlay
-from dataset.plantdreamer_semantic import COLOR_TO_CLASS, CLASS_COLORS
+from leaf_seg.semantic.metrics import StreamSegMetrics
+from leaf_seg.models import modelling
+from leaf_seg.models.modelling import ENCODER_CHOICES, MODEL_CHOICES
+from leaf_seg.dataset.utils import decode_mask, overlay
+from leaf_seg.dataset.plantdreamer_semantic import COLOR_TO_CLASS, CLASS_COLORS
 
 def load_image(path, resize=(256, 256)):
     image = Image.open(path).convert("RGB")

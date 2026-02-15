@@ -54,6 +54,8 @@ class LeafCoco(Dataset):
         self.cat_id_to_contiguous = {cid: i + 1 for i, cid in enumerate(self.cat_ids)}
         self.remap = remap
 
+        self._normalize_iscrowd_annotations(annotation_file)
+
         if self.filter_empty:
             kept = []
             for img_id in self.img_ids:
@@ -61,6 +63,32 @@ class LeafCoco(Dataset):
                 if len(ann_ids) > 0:
                     kept.append(img_id)
             self.img_ids = kept
+
+    def _normalize_iscrowd_annotations(self, annotation_file: str | Path) -> None:
+        """
+        Some CVAT/COCO exports mark all instances as `iscrowd=1`.
+        COCOeval then treats all GT as crowd/ignore and returns AP = -1.
+        """
+        anns = self.coco.dataset.get("annotations", [])
+        if not anns:
+            return
+
+        crowd_values = []
+        for ann in anns:
+            try:
+                crowd_values.append(int(ann.get("iscrowd", 0)))
+            except (TypeError, ValueError):
+                crowd_values.append(0)
+
+        if all(v == 1 for v in crowd_values):
+            logger.warning(
+                "All annotations in %s have iscrowd=1; converting to iscrowd=0 for training/eval.",
+                annotation_file,
+            )
+            for ann in anns:
+                ann["iscrowd"] = 0
+            for ann in self.coco.anns.values():
+                ann["iscrowd"] = 0
 
     def __len__(self):
         return len(self.img_ids)
@@ -195,7 +223,8 @@ def get_dataloader(
 ) -> Tuple[DataLoader, DataLoader]:
     
     dataset_dirs = {
-        "bean_instance_synth": "data/bean_instance_synth/train"
+        "bean_instance_synth": "data/bean_instance_synth/train",
+        "bean_instance_real": "data/bean_instance_real/train",
     }
 
     base = Path(dataset_dirs[dataset])

@@ -160,7 +160,6 @@ def get_dataloader(
     num_classes: int,
     pin_memory: bool = False,
     shuffle: bool = True,
-    base_dir: str = "./data/beans",
     image_size: int = 512,
     mean: Tuple[float, float, float] = (0.485, 0.456, 0.406),
     std: Tuple[float, float, float] = (0.229, 0.224, 0.225),
@@ -170,7 +169,8 @@ def get_dataloader(
     train_transforms: Optional[A.Compose] = None,
     val_transforms: Optional[A.Compose] = None,
 ) -> Tuple[DataLoader, DataLoader]:
-    """Factory to create train/validation DataLoaders for supported dataset ids.
+    """
+    Factory to create train/validation DataLoaders for supported dataset ids.
 
     Parameters:
     - dataset: identifier, currently supports 'bean01' and 'all'
@@ -183,7 +183,6 @@ def get_dataloader(
 
     Returns (train_loader, val_loader)
     """
-    base_dir = str(base_dir)
 
     # mapping of species identifiers to data folders (can be adjusted)
     species_dirs = {

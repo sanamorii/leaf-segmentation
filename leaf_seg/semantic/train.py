@@ -24,13 +24,13 @@ import segmentation_models_pytorch as smp
 import segmentation_models_pytorch.losses as smp_losses
 from segmentation_models_pytorch.base.model import SegmentationModel
 
-from dataset.utils import rgb_to_class
-from dataset.plantdreamer_semantic import get_dataloader
-from loss.cedice import CEDiceLoss
-from loss.earlystop import EarlyStopping
-from models.utils import create_ckpt, save_ckpt, load_ckpt
-from models.modelling import get_smp_model
-from metrics import StreamSegMetrics
+from leaf_seg.dataset.utils import rgb_to_class
+from leaf_seg.dataset.plantdreamer_semantic import get_dataloader
+from leaf_seg.common.loss.cedice import CEDiceLoss
+from leaf_seg.common.loss.earlystop import EarlyStopping
+from leaf_seg.models.utils import create_ckpt, save_ckpt, load_ckpt
+from leaf_seg.models.modelling import get_smp_model
+from leaf_seg.semantic.metrics import StreamSegMetrics
 
 from leaf_seg.reporter.semantic import SemanticTrainingReporter
 from leaf_seg.common.verbose import get_tqdm_bar, resolve_progress_flag
@@ -315,6 +315,7 @@ def fit(
             metric_value = val_stats.get(cfg.monitor_metric, None)
 
             if metric_value is not None and metric_value > best_metric:
+                best_epoch = epoch
                 best_metric = metric_value
                 save_ckpt(checkpoint, str(ckpt_dir / f"{model_name}-{cfg.epochs}_best.pth"))
             
@@ -350,7 +351,12 @@ def fit(
 
         if device.type == "cuda": torch.cuda.empty_cache()  # clear cache
 
-def run(cfg: SemanticTrainConfig):
+    return str(ckpt_dir / f"{model_name}-{cfg.epochs}_best.pth")
+
+def run(cfg: SemanticTrainConfig) -> str:
+    """
+    run semantic cv training: returns path to the best model
+    """
     cfg.progress = resolve_progress_flag(cfg.progress)
 
     train_loader, val_loader = get_dataloader(
@@ -369,7 +375,7 @@ def run(cfg: SemanticTrainConfig):
     if not cfg.no_report:
         reporter = build_reporter(cfg, model_name = model.name)
 
-    fit(
+    return fit(
         model=model,
         train_loader=train_loader,
         val_loader=val_loader,
