@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import os
 import time
 import logging
 import datetime
@@ -25,17 +26,17 @@ import segmentation_models_pytorch.losses as smp_losses
 from segmentation_models_pytorch.base.model import SegmentationModel
 
 from leaf_seg.dataset.utils import rgb_to_class
-from leaf_seg.dataset.plantdreamer_semantic import get_dataloader
+from leaf_seg.dataset.plantdreamer_semantic import build_dataloaders
 from leaf_seg.common.loss.cedice import CEDiceLoss
 from leaf_seg.common.loss.earlystop import EarlyStopping
+from leaf_seg.common.verbose import get_tqdm_bar, resolve_progress_flag
 from leaf_seg.models.utils import create_ckpt, save_ckpt, load_ckpt
 from leaf_seg.models.modelling import get_smp_model
 from leaf_seg.semantic.metrics import StreamSegMetrics
-
-from leaf_seg.reporter.semantic import SemanticTrainingReporter
-from leaf_seg.common.verbose import get_tqdm_bar, resolve_progress_flag
 from leaf_seg.semantic.build import build_optimiser, build_reporter, build_scheduler, setup_model
 from leaf_seg.semantic.config import SemanticTrainConfig
+from leaf_seg.reporter.semantic import SemanticTrainingReporter
+
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -218,7 +219,9 @@ def fit(
     val_loader: DataLoader,
     cfg: SemanticTrainConfig,
     reporter: SemanticTrainingReporter | None = None,
-    save: bool = True,
+    start_epoch: int = 0,
+    end_epoch: int | None = None,
+    # save: bool = True,
     # monitor_metric: MetricLiterals  = "mean_iou",
     # gradient_clipping: float = 0.1,
 ):
@@ -226,15 +229,18 @@ def fit(
     model.to(device)
 
     best_vloss = float("inf")
-    best_metric = float(-"inf")
+    best_metric = float("-inf")
     best_epoch = 0
 
-    start_epoch = 0
     cur_itrs = 0
 
     # normalize device
     if not isinstance(device, torch.device):
         device = torch.device(device)
+
+    # check for finetune
+    if end_epoch is None:
+        end_epoch = cfg.epochs
 
     # use the proper GradScaler constructor
     grad_scaler = torch.amp.GradScaler(device=device) if cfg.use_amp else None 
@@ -254,7 +260,7 @@ def fit(
             logger.warning("Could not load scheduler state from checkpoint")
 
         cur_itrs = ckpt.get("cur_itrs", 0)
-        start_epoch = int(ckpt.get("epoch", 0))
+        start_epoch = int(ckpt.get("epoch", start_epoch))  # for finetuning
 
         validation_stats = ckpt.get("validation_stats", None)
         if validation_stats is not None:
@@ -264,11 +270,11 @@ def fit(
         logger.info("Resumed training from %s (starting epoch=%d)", cfg.resume, start_epoch)
 
 
-    for epoch in range(start_epoch, cfg.epochs):
+    for epoch in range(start_epoch, end_epoch):
         
         train_stats = train_epoch(
             model=model,
-            loader=get_tqdm_bar(train_loader, epoch, cfg.epochs, "Train", cfg.progress),
+            loader=get_tqdm_bar(train_loader, epoch, end_epoch, "Train", cfg.progress),
             loss_fn=loss_fn,
             optimiser=optimiser,
             scaler=grad_scaler,
@@ -279,7 +285,7 @@ def fit(
 
         val_stats = validate_epoch(
             model=model,
-            loader=get_tqdm_bar(val_loader, epoch, cfg.epochs, "Train", cfg.progress),
+            loader=get_tqdm_bar(val_loader, epoch, end_epoch, "Val", cfg.progress),
             loss_fn=loss_fn,
             metrics=val_metrics,
             device=device,
@@ -289,36 +295,34 @@ def fit(
 
 
         # save model
-        if save:
-            checkpoint = create_ckpt(
-                cur_itrs=cur_itrs,
-                model=model,
-                optimiser=optimiser,
-                scheduler=scheduler,
-                train_stats=train_stats["loss_total"],
-                val_stats=val_stats["loss_total"],
-                epoch=epoch,
-                num_classes=cfg.num_classes
-            )
+        checkpoint = create_ckpt(
+            cur_itrs=cur_itrs,
+            model=model,
+            optimiser=optimiser,
+            scheduler=scheduler,
+            train_stats=train_stats["loss_total"],
+            val_stats=val_stats["loss_total"],
+            epoch=epoch,
+            num_classes=cfg.num_classes
+        )
 
-            # ensure checkpoints directory exists
-            ckpt_dir = Path(cfg.out) / "checkpoints"
-            ckpt_dir.mkdir(parents=True, exist_ok=True)
+        # ensure checkpoints directory exists
+        ckpt_dir = Path(cfg.output)
+        ckpt_dir.mkdir(parents=True, exist_ok=True)
 
+        # update best_vloss and best_score based on monitor_metric
+        if val_stats["loss_total"] < best_vloss:
+            best_vloss = float(val_stats["loss_total"])
+        
+        model_name = getattr(model, 'name', model.__class__.__name__)
+        save_ckpt(checkpoint, str(ckpt_dir / "model_current.pth"))
+        metric_value = val_stats.get(cfg.monitor_metric, None)
 
-            # update best_vloss and best_score based on monitor_metric
-            if val_stats["loss_total"] < best_vloss:
-                best_vloss = float(val_stats["loss_total"])
-            
-            model_name = getattr(model, 'name', model.__class__.__name__)
-            save_ckpt(checkpoint, str(ckpt_dir / f"{model_name}-{cfg.epochs}_current.pth"))
-            metric_value = val_stats.get(cfg.monitor_metric, None)
-
-            if metric_value is not None and metric_value > best_metric:
-                best_epoch = epoch
-                best_metric = metric_value
-                save_ckpt(checkpoint, str(ckpt_dir / f"{model_name}-{cfg.epochs}_best.pth"))
-            
+        if metric_value is not None and metric_value > best_metric:
+            best_epoch = epoch
+            best_metric = metric_value
+            save_ckpt(checkpoint, str(ckpt_dir / f"model_best.pth"))
+        
 
         logger.info(
             "Epoch %d/%d: Avg Train Loss: %.4f, Avg Val Loss: %.4f, Mean IoU: %.4f, Training time: %s, Validation time: %s",
@@ -357,23 +361,26 @@ def run(cfg: SemanticTrainConfig) -> str:
     """
     run semantic cv training: returns path to the best model
     """
-    cfg.progress = resolve_progress_flag(cfg.progress)
-
-    train_loader, val_loader = get_dataloader(
-        dataset=cfg.dataset,
-        batch_size=cfg.batch_size,
-        num_workers=cfg.num_workers,
-        num_classes=cfg.num_classes,
-    )
 
     model = setup_model(cfg)
     optimiser = build_optimiser(model, cfg.lr)
     scheduler = build_scheduler(optimiser)
     loss_fn = CEDiceLoss(ce_weight=0.5, dice_weight=0.5)
 
+    timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+    cfg.output = os.path.join(cfg.output, f"{timestamp}-train-{model.name}")
+    cfg.progress = resolve_progress_flag(cfg.progress)
+
+    train_loader, val_loader, _, _ = build_dataloaders(
+        dataset_id=cfg.dataset,
+        registry_path="data/datasets.yaml",
+        batch_size=cfg.batch_size,
+        num_workers=cfg.num_workers,
+    )
+
     reporter = None
     if not cfg.no_report:
-        reporter = build_reporter(cfg, model_name = model.name)
+        reporter = build_reporter(cfg=cfg, model_name = model.name)
 
     return fit(
         model=model,
