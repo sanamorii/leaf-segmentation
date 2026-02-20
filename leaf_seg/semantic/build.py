@@ -8,7 +8,7 @@ from torch.optim.lr_scheduler import LRScheduler
 
 from leaf_seg.reporter.semantic import SemanticTrainingReporter
 from leaf_seg.semantic.config import SemanticTrainConfig
-from models.modelling import get_smp_model as get_model
+from leaf_seg.models.modelling import get_smp_model as get_model
 
 
 def setup_model(cfg: SemanticTrainConfig) -> nn.Module:
@@ -19,17 +19,17 @@ def setup_model(cfg: SemanticTrainConfig) -> nn.Module:
         classes=cfg.num_classes,
     )
 
-    model.name = f"{model.__class__.__name__.lower()}-{cfg.encoder}-{cfg.dataset}"
+    model.name = f"{model.__class__.__name__.lower()}_{cfg.encoder}_{cfg.dataset}"
     return model
 
-def build_reporter(report_every: int,  model_name: str, cfg: SemanticTrainConfig) -> SemanticTrainingReporter:
+def build_reporter(model_name: str, cfg: SemanticTrainConfig) -> SemanticTrainingReporter:
     timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    run_name = f"{model_name}-{cfg.epochs}-{timestamp}-report"
-    report_dir = Path(cfg.out) / "reports" /  run_name
+    # run_name = f"{model_name}-{cfg.epochs}-{timestamp}-report"
+    report_dir = Path(cfg.output)
     reporter = SemanticTrainingReporter(
         output_dir=report_dir,
-        monitor_metric="mean_iou",  # TODO: set customiseable montior metric
-        plot_every=max(1, int(report_every)),
+        monitor_metric=cfg.monitor_metric,
+        plot_every=max(1, int(cfg.report_every)),
         append=bool(cfg.resume),
     )
 
