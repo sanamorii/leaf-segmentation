@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-import os
+import yaml
 import json
 import torch
 import numpy as np
@@ -9,281 +9,58 @@ import logging
 from albumentations.pytorch import ToTensorV2
 from torch.utils.data import DataLoader, Dataset
 from sklearn.model_selection import train_test_split
-from typing import List, Tuple, Optional
+from typing import List, Literal, Tuple, Optional
 from pathlib import Path
 from PIL import Image
 from glob import glob
 
-from .utils import rgb_to_class
 
 logger = logging.getLogger(__name__)
 
-CLASS_COLORS = {
-    0: (0, 0, 0),       # Background (black)
-    1: (0, 255, 0),     # Leaf (green)
-    2: (255, 165, 0),   # Pot (orange)
-    3: (139, 69, 19),   # Soil (brown)
-    4: (157, 0, 255),   # Stem (purple)
-}
-COLOR_TO_CLASS = {
-    (0, 0, 0): 0,  # Background
-    (1, 1, 1): 1,  # Leaf
-    (2, 2, 2): 2,  # Pot
-    (3, 3, 3): 3,  # Soil
-    # (4, 4, 4): 4   # Stem
-}
+SplitKind = Literal["ratio", "files", "none"]
 
-CLASSES = {
-    "default":{
-        (0, 0, 0): 0,  # Background
-        (1, 1, 1): 1,  # Leaf
-        (2, 2, 2): 2,  # Pot
-        (3, 3, 3): 3,  # Soil
-        (4, 4, 4): 4   # Stem
-    },
-    "reduced":{
-        (0, 0, 0): 0,  # Background
-        (1, 1, 1): 1,  # Leaf
-        (2, 2, 2): 2,  # Pot
-        (3, 3, 3): 3,  # Stem
-    },
-    "wheat":{
-        (0,0,0): 0,
-        (1, 1, 1): 1,  # Head
-        (2, 2, 2): 2,  # Leaf
-        (3, 3, 3): 3,  # Pot
-        (4, 4, 4): 4   # Stem
-
-    }
-}
-
-
-def collect_from_dirs(gt_dir: Path, mask_dir: Path, ext: str = "png"):
-    """Helper to collect pairs from a single gt/mask directory pair."""
-    sub_pairs = []
-    if not gt_dir.exists() or not mask_dir.exists():
-        return sub_pairs
-
-    images = sorted([str(p) for p in gt_dir.glob(f"*.{ext}")])
-    masks = sorted([str(p) for p in mask_dir.glob(f"*.{ext}")])
-
-    # assuming 1-to-1 filename match
-    if len(images) != len(masks):
-        logger.warning("Mismatched counts in %s: images=%d masks=%d", gt_dir.parent, len(images), len(masks))
-        # continue to next subdir rather than asserting
-        return sub_pairs
-
-    for img_path, mask_path in zip(images, masks):
-        if Path(img_path).name != Path(mask_path).name:
-            logger.warning("Filename mismatch: %s vs %s", img_path, mask_path)
-            continue
-        sub_pairs.append((img_path, mask_path))
-    return sub_pairs
-
-def collect_all_data(base_dir: str, ext: str = "png") -> list[tuple[str, str]]:
-    """Collect (image, mask) pairs under a base directory.
-
-    Expects a structure like base_dir/<subdir>/gt/*.png and base_dir/<subdir>/mask/*.png
-    Or a structure like base_dir/gt/*.png and base_dir/mask/*.png
-
-    Returns a list of (image_path, mask_path) tuples (strings). Does not raise on
-    empty datasets but logs a warning.
-    """
-    base = Path(base_dir)
-    if not base.exists():
-        logger.warning("Base directory does not exist: %s", base_dir)
-        return []
-
-    pairs: List[Tuple[str, str]] = []
-
-    # case 1: flat structure (base_dir/gt and base_dir/mask)
-    flat_gt = base / "gt"
-    flat_mask = base / "mask"
-    pairs.extend(collect_from_dirs(flat_gt, flat_mask, ext))
-
-    # case 2: nested subdirectories (base_dir/<subdir>/gt, mask) 
-    for subdir in base.iterdir():
-        if not subdir.is_dir():
-            continue
-        gt_dir = subdir / "gt"
-        mask_dir = subdir / "mask"
-        pairs.extend(collect_from_dirs(gt_dir, mask_dir, ext))
-
-    if len(pairs) == 0:
-        logger.warning("No image/mask pairs found under %s", base_dir)
-
-    return pairs
-
-@dataclass
-class SemanticDataset:
-    base_directory: str
-    train_set: list[tuple[str, str]]
-    test_set:  list[tuple[str, str]]
-    eval_set:  list[tuple[str, str]]
-
-# def get_dataset(dataset: str, config: Path = "data/datasets.json"):
-
-#     with config.open("r", encoding="utf-8") as f:
-#         data = json.load(f)
-
-#     cfg = data[dataset]
-#     num_classes = cfg["num_classes"]
-
-#     def _get(split):
-#         path = os.path.join(cfg["base"], cfg["split"]["train"])
-#         pairs = collect_all_data(path)
-#         return zip(*pairs)
-
-#     if isinstance(cfg["split"], dict):
-
-#         train_gt, train_mask = _get("train")
-#         train_dataset = PlantDreamerData(image_paths=train_gt, mask_paths=train_mask, n_classes=num_classes)
-
-#         test_gt, test_mask = _get("test")
-#         test_dataset = PlantDreamerData(image_paths=test_gt, mask_paths=test_mask, n_classes=num_classes)
-#         return train_dataset, test_dataset
-
-#     elif isinstance(cfg["split"], list):
-#         if len(cfg["split"]) != 2: raise Exception("incorrect traintest split")
-
-#         all_pairs = collect_all_data(cfg["base"])
-#         train_paths, val_paths = train_test_split(
-#             all_pairs, train_size=cfg["split"][0], test_size=cfg["split"][1], random_state=42, shuffle=True
-#         )
-#         train_
-
-
-def get_dataloader(
-    dataset: str,  # name of the dataset
-    batch_size: int,
-    num_workers: int,
-    num_classes: int,
-    pin_memory: bool = False,
-    shuffle: bool = True,
-    image_size: int = 512,
+def TRAIN_TFMS(
+    image_size: tuple[int, int] = (512, 512),
     mean: Tuple[float, float, float] = (0.485, 0.456, 0.406),
     std: Tuple[float, float, float] = (0.229, 0.224, 0.225),
-    ext: str = "png",
-    seed: int = 42,
-    drop_last: bool = False,
-    train_transforms: Optional[A.Compose] = None,
-    val_transforms: Optional[A.Compose] = None,
-) -> Tuple[DataLoader, DataLoader]:
-    """
-    Factory to create train/validation DataLoaders for supported dataset ids.
-
-    Parameters:
-    - dataset: identifier, currently supports 'bean01' and 'all'
-    - base_dir: root data folder used for 'all' and bean-specific paths
-    - image_size, mean, std: augmentation/resizing params
-    - ext: image file extension
-    - seed: random seed for train/val split
-    - drop_last: pass to DataLoader for training
-    - train_transforms / val_transforms: optional custom albumentations.Compose transforms
-
-    Returns (train_loader, val_loader)
-    """
-
-    # mapping of species identifiers to data folders (can be adjusted)
-    species_dirs = {
-        "bean_semantic_real_train": "./data/bean_semantic_real/100",
-        "bean_semantic_real_train80": "./data/bean_semantic_real/80",
-        "bean_semantic_real_train75": "./data/bean_semantic_real/75",
-        "bean_semantic_real_train50": "./data/bean_semantic_real/50",
-        "bean_semantic_real_train25": "./data/bean_semantic_real/25",
-        "bean_semantic_real_train10": "./data/bean_semantic_real/10",
-        
-        "bean_semantic_synth_train": "./data/bean_semantic_synth_train",
-
-        "bean_semantic": "./data/bean_semantic",
-        "wheat_semantic": "./data/wheat_semantic",
-        "kale_semantic": "./data/kale_semantic",
-        "mint_semantic": "./data/mint_semantic",
-        "tomato": "./data/tomato",
-    }
-
-    # default augmentations if caller didn't provide custom ones
-    # default mean: Tuple[float, float, float] = (0.485, 0.456, 0.406),
-    #         std:  Tuple[float, float, float] = (0.229, 0.224, 0.225),
-    if train_transforms is None:
-        train_transforms = A.Compose(
-            [
-                A.Resize(image_size, image_size),
-                A.HorizontalFlip(p=0.5),
-                A.RandomBrightnessContrast(p=0.2),
-                A.Normalize(mean=mean, std=std),
-                ToTensorV2(),
-            ]
-        )
-    if val_transforms is None:
-        val_transforms = A.Compose(
-            [
-                A.Resize(image_size, image_size),
-                A.Normalize(mean=mean, std=std),
-                ToTensorV2(),
-            ]
-        )
-
-    if dataset in ["tomato"]:
-        raise NotImplementedError(f"dataset {dataset} not available")
-
-    # individual species support: 'bean', 'wheat', 'kale', 'mint', 'tomato'
-    if dataset in species_dirs:
-        species_base = species_dirs[dataset]
-        all_pairs = collect_all_data(species_base, ext=ext)
-        if len(all_pairs) == 0:
-            raise RuntimeError(f"No data found for species '{dataset}' in {species_base} for extension {ext}")
-
-        # # we use a percentage subset of the dataset if required - used for finetuning experiments
-        # if percen >= 1:
-        #     if shuffle: np.random.shuffle(all_pairs)
-        #     n = int(len(all_pairs) * percen)
-        #     all_pairs = allpairs[:n]
-
-        train_paths, val_paths = train_test_split(
-            all_pairs, test_size=0.2, random_state=seed, shuffle=shuffle
-        )
-        train_imgs, train_masks = zip(*train_paths)
-        val_imgs, val_masks = zip(*val_paths)
-        train_ds = PlantDreamerData(list(train_imgs), list(train_masks), transforms=train_transforms, n_classes=num_classes)
-        val_ds = PlantDreamerData(list(val_imgs), list(val_masks), transforms=val_transforms, n_classes=num_classes)
-
-    else:
-        raise ValueError(f"Invalid dataset identifier: {dataset}")
-
-    logger.info("Training dataset size: %d", len(train_ds))
-    logger.info("Validation dataset size: %d", len(val_ds))
-
-    train_loader = DataLoader(
-        train_ds,
-        batch_size=batch_size,
-        shuffle=shuffle,
-        num_workers=num_workers,
-        pin_memory=pin_memory,
-        drop_last=drop_last,
+) -> A.Compose:
+    h, w = image_size
+    return A.Compose(
+        [
+            A.Resize(h, w),
+            A.HorizontalFlip(p=0.5),
+            A.RandomBrightnessContrast(p=0.2),
+            A.Normalize(mean=mean, std=std),
+            ToTensorV2(),
+        ]
     )
-    val_loader = DataLoader(
-        val_ds,
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=num_workers,
-        pin_memory=pin_memory,
-        drop_last=False,
-    )
-    return train_loader, val_loader
 
+
+def VAL_TFMS(
+    image_size: tuple[int, int] = (512, 512),
+    mean: Tuple[float, float, float] = (0.485, 0.456, 0.406),
+    std: Tuple[float, float, float] = (0.229, 0.224, 0.225),
+) -> A.Compose:
+    h, w = image_size
+    return A.Compose(
+        [
+            A.Resize(h, w),
+            A.Normalize(mean=mean, std=std),
+            ToTensorV2(),
+        ]
+    )
 
 class PlantDreamerData(Dataset):
     """
     PlantDreamer dataset format; depth, gt, mask
     Take an array of image_paths and mask_paths - this should be aggregated outside this function.
     """
-    def __init__(self, image_paths, mask_paths, n_classes, transforms=None):
+    def __init__(self, image_paths, mask_paths, transforms=None):
         assert len(image_paths) == len(mask_paths)
         self.image_paths = image_paths
         self.mask_paths = mask_paths
         self.transforms = transforms
-        self.n_classes = n_classes
+        # self.n_classes = n_classes
         # self.colors_to_class = class_colors
 
     def __len__(self):
@@ -296,9 +73,6 @@ class PlantDreamerData(Dataset):
         # TODO: add some functionality to account for rgb
         if len(mask.shape) > 2:
             raise RuntimeError("Mask is not monochrome, aborting")
-        if len(np.unique(mask)) > self.n_classes:
-            raise RuntimeError(f"Number of classes in mask is not equal to reported no. of classes.\nViolating mask: {self.mask_paths[idx]}")
-
         # mask = rgb_to_class(mask, class_colors=self.colors_to_class) 
 
         if self.transforms:
@@ -312,37 +86,280 @@ class PlantDreamerData(Dataset):
         return image, mask
 
 
-# class PlantDreamer(Dataset):
-#     """
-#     PlantDreamer dataset format; depth, gt, mask
-#     Take an filepath to image_dir (correspondong to gt) and mask_dir (correspondong to mask)
-#     """
-#     def __init__(self, image_dir:str, mask_dir:str, class_colors, transforms=None) -> None:
-#         self.image_dir = image_dir
-#         self.mask_dir = mask_dir
-#         self.transforms = transforms
-#         self.images = list(sorted(os.listdir(image_dir)))
-#         self.masks = list(sorted(os.listdir(mask_dir)))
-#         self.colors_to_class = class_colors
+@dataclass(frozen=True, kw_only=True)
+class DatasetSpec:
+    name: str
+    root: Path
+    task: Literal["semantic", "instance"]
+    image_dir: str = "images"
+    mask_dir: str = "masks"
+    ext: str = "png"
+    # manifest  ## e.g. root/manifest.jsonl
 
-#         super().__init__()
+@dataclass(frozen=True, kw_only=True)
+class SplitSpec:
+    kind: SplitKind
+    seed: int = 42
+    train_ratio: float = 0.8
+    val_ratio: float = 0.2
+    train_files: Optional[Path] = None
+    val_files: Optional[Path] = None
 
-#     def __len__(self):
-#         return len(self.images)
 
-#     def __getitem__(self, index):
-#         img_path = os.path.join(self.image_dir, self.images[index])
-#         mask_path = os.path.join(self.mask_dir, self.masks[index])
+def scan_pairs(root: Path, image_dir: str, mask_dir: str, ext: str) -> list[tuple[str, str]]:
+    img_dir = root / image_dir
+    msk_dir = root / mask_dir
+    imgs = sorted (img_dir.glob(f"*.{ext}"))
+    msks = sorted (msk_dir.glob(f"*.{ext}"))
 
-#         image = np.array(Image.open(img_path).convert("RGB"))
-#         mask = np.array(Image.open(mask_path).convert("RGB"))
-#         mask = rgb_to_class(mask, class_colors=self.colors_to_class)  # class mask from RGB
+    # match by filename
+    msk_map = {p.name: p for p in msks}
+    pairs = []
+    for p in imgs:
+        if p.name in msk_map:
+            pairs.append((str(p), str(msk_map[p.name])))
+    return pairs
 
-#         if self.transforms:
-#             augmented = self.transforms(image=image, mask=mask)
-#             image = augmented["image"].float()
-#             mask = augmented["mask"].long()
-#         else:
-#             image = torch.from_numpy(image).permute(2, 0, 1).float() / 255.0
-#             mask = torch.from_numpy(mask).long()
-#         return image, mask
+def load_split_file_pairs(root: Path, image_dir: str, mask_dir: str, filelist: Path) -> list[tuple[str, str]]:
+    img_dir = root / image_dir
+    msk_dir = root / mask_dir
+    names = [ln.strip() for ln in filelist.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    return [(str(img_dir / n), str(msk_dir / n)) for n in names]
+
+def resolve_pairs(spec: DatasetSpec, split: SplitSpec, shuffle: bool = True) -> tuple[list[tuple[str,str]], list[tuple[str,str]] | None]:
+
+    all_pairs = scan_pairs(spec.root, spec.image_dir, spec.mask_dir, spec.ext)
+
+    if split.kind ==  "none":
+        return all_pairs, None
+    
+    if split.kind ==  "files":
+        if not split.train_files or not split.val_files:
+            raise ValueError("file split requires train_files and val_files")
+        train_pairs = load_split_file_pairs(spec.root, spec.image_dir, spec.mask_dir, split.train_files)
+        val_pairs = load_split_file_pairs(spec.root, spec.image_dir, spec.mask_dir, split.val_files)
+        return train_pairs, val_pairs
+
+    if split.kind == "ratio":
+        if not (0.0 < split.train_ratio < 1.0) or not (0.0 < split.val_ratio < 1.0):
+            raise ValueError("ratios must be in (0,1)")
+        
+        if abs((split.train_ratio + split.val_ratio) - 1.0) > 1e-6:
+            raise ValueError("train_ratio + val_ratio must equal 1.0")
+        
+        train_pairs, val_pairs = train_test_split(
+            all_pairs, test_size=split.val_ratio, random_state=split.seed, shuffle=shuffle
+        )
+        return train_pairs, val_pairs
+    
+    raise ValueError(f"Unknown split kind: {split.kind}")
+
+
+def load_registry(registry_path: str | Path) -> dict:
+    registry_path = Path(registry_path)
+
+    if not registry_path.exists():
+        raise FileNotFoundError(f"Registry YAML not found: {registry_path}")
+    
+    with registry_path.open(mode="r", encoding="utf-8") as f:
+        reg = yaml.safe_load(f)
+
+    if not isinstance(reg, dict):
+        raise ValueError("Registry YAML must be a mapping (dict) at the top level")
+
+    return reg
+
+def get_dataset_spec(dataset_id: str, registry_path: str | Path) -> DatasetSpec:
+    reg = load_registry(registry_path)
+
+    if dataset_id not in reg:
+        keys = sorted(k for k in reg.keys() if k != "splits")
+        raise KeyError(f"Unknown dataset id '{dataset_id}'. Available: {keys}")
+
+    cfg = reg[dataset_id]
+    if not isinstance(cfg, dict):
+        raise ValueError(f"Dataset entry '{dataset_id}' must map to a dict.")
+
+    root = cfg.get("root")
+    if root is None:
+        raise ValueError(f"Dataset '{dataset_id}' missing required key: root")
+    
+    task = cfg.get("task")
+    if task not in ("semantic", "instance"):
+        raise ValueError(f"Dataset '{dataset_id}' has invalid task '{task}'")
+    
+    return DatasetSpec(
+        name=dataset_id,
+        root=Path(root),
+        task=task,
+        image_dir=cfg.get("image_dir", "images"),
+        mask_dir=cfg.get("mask_dir", "masks"),
+        ext=cfg.get("ext", "png"),
+    )
+
+
+def _resolve_path(base_dir: Path, value: str | Path | None) -> Optional[Path]:
+    if value is None or base_dir is None:
+        return None
+    p = Path(value)
+    return p if p.is_absolute() else (base_dir / p)
+
+def get_split_spec(dataset_id: str, registry_path: str | Path) -> SplitSpec:
+    reg = load_registry(registry_path)
+    ds_cfg = reg.get(dataset_id)
+    if not isinstance(ds_cfg, dict):
+        raise KeyError(f"Unknown dataset id '{dataset_id}'.")
+
+    split_cfg = ds_cfg.get("split")
+
+    # default split if absent
+    if split_cfg is None:
+        return SplitSpec(kind="ratio", train_ratio=0.8, val_ratio=0.2, seed=42)
+
+    if not isinstance(split_cfg, dict):
+        raise ValueError(f"split for '{dataset_id}' must be a dict")
+
+    kind = split_cfg.get("kind", "ratio")
+    if kind not in ("ratio", "files", "none"):
+        raise ValueError(f"Invalid split kind '{kind}' for '{dataset_id}'")
+
+    if kind == "none":
+        return SplitSpec(kind="none")
+
+    seed = int(split_cfg.get("seed", 42))
+
+    if kind == "ratio":
+        tr = float(split_cfg.get("train_ratio", 0.8))
+        vr = float(split_cfg.get("val_ratio", 0.2))
+        if abs((tr + vr) - 1.0) > 1e-6:
+            raise ValueError(f"train_ratio + val_ratio must equal 1.0 (got {tr}+{vr})")
+        return SplitSpec(kind="ratio", seed=seed, train_ratio=tr, val_ratio=vr)
+
+    if kind == "files":
+        train_files = _resolve_path(ds_cfg.get("root"),split_cfg.get("train_files"))
+        val_files = _resolve_path(ds_cfg.get("root"),split_cfg.get("val_files"))
+        if train_files is None or val_files is None:
+            raise ValueError("files split requires train_files and val_files")
+        return SplitSpec(kind="files", seed=seed, train_files=train_files, val_files=val_files)
+
+
+def build_dataset(
+    dataset_id: str,
+    registry_path: str | Path,
+    *,
+    train_transforms: Optional[A.Compose] = None,
+    val_transforms: Optional[A.Compose] = None,
+    image_size: tuple[int, int] = (512, 512),
+    mean: Tuple[float, float, float] = (0.485, 0.456, 0.406),
+    std: Tuple[float, float, float] = (0.229, 0.224, 0.225),
+    shuffle: bool = True,
+) -> tuple[DataLoader, Optional[DataLoader], DatasetSpec, SplitSpec]:
+    spec = get_dataset_spec(dataset_id, registry_path)
+    split = get_split_spec(dataset_id, registry_path)
+
+    if spec.task != "semantic": # TODO: implement instance dataloading
+        raise NotImplementedError("instance not available")
+    
+    if train_transforms is None:
+        train_transforms = TRAIN_TFMS(image_size, mean, std)
+    if val_transforms is None:
+        val_transforms = VAL_TFMS(image_size, mean, std)
+    
+    train_pairs, val_pairs = resolve_pairs(spec, split, shuffle)
+
+    trn_img, trn_msk = zip(*train_pairs)
+    train_ds = PlantDreamerData(trn_img, trn_msk, transforms=train_transforms)
+
+    val_ds: DataLoader | None = None
+    if val_pairs is not None:
+        val_img, val_msk = zip(*val_pairs)
+        val_ds = PlantDreamerData(val_img, val_msk, transforms=val_transforms)
+
+    logger.info("Dataset=%s root=%s task=%s", spec.name, spec.root, spec.task)
+    logger.info("Split kind=%s train=%d val=%s", split.kind, len(train_ds), (len(val_pairs) if val_pairs else None))
+
+    return train_ds, val_ds, spec, split
+
+
+
+def build_dataloaders(
+    dataset_id: str,
+    registry_path: str | Path,
+    *,
+    batch_size: int,
+    num_workers: int,
+    pin_memory: bool = True,
+    train_transforms: Optional[A.Compose] = None,
+    val_transforms: Optional[A.Compose] = None,
+    image_size: tuple[int, int] = (512, 512),
+    mean: Tuple[float, float, float] = (0.485, 0.456, 0.406),
+    std: Tuple[float, float, float] = (0.229, 0.224, 0.225),
+    shuffle: bool = True,
+    drop_last: bool = True,
+) -> tuple[DataLoader, Optional[DataLoader], DatasetSpec, SplitSpec]:
+
+    train_ds, val_ds, spec, split = build_dataset(
+        dataset_id=dataset_id,
+        registry_path=registry_path,
+        train_transforms=train_transforms,
+        val_transforms=val_transforms,
+        image_size=image_size,
+        mean=mean, std=std,
+        shuffle=shuffle,
+        drop_last=drop_last,
+    )
+
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        shuffle=shuffle,
+        drop_last=drop_last,
+    )
+
+    val_loader: DataLoader | None = None
+    if val_ds is not None:
+        val_loader = DataLoader(
+            val_ds,
+            batch_size=batch_size,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+            shuffle=False,
+            drop_last=False,
+        )
+
+    logger.info("Dataset=%s root=%s task=%s", spec.name, spec.root, spec.task)
+    logger.info("Split kind=%s train=%d val=%s", split.kind, len(train_ds), (len(val_ds) if val_ds else None))
+
+    return train_loader, val_loader, spec, split
+
+
+# basic smoke test
+if __name__ == "__main__":
+    import argparse
+
+    logging.basicConfig(level=logging.INFO)
+
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--registry", type=str, default="datasets.yaml")
+    ap.add_argument("--dataset", type=str, required=True)
+    ap.add_argument("--batch_size", type=int, default=8)
+    ap.add_argument("--num_workers", type=int, default=4)
+    ap.add_argument("--pin_memory", action="store_true")
+    args = ap.parse_args()
+
+    train_loader, val_loader, spec, split = build_dataloaders(
+        dataset_id=args.dataset,
+        registry_path=args.registry,
+        batch_size=args.batch_size,
+        num_workers=args.num_workers,
+        pin_memory=args.pin_memory,
+    )
+
+    # iterate one batch to validate
+    x, y = next(iter(train_loader))
+    print("Train batch:", x.shape, y.shape)
+    if val_loader is not None:
+        x, y = next(iter(val_loader))
+        print("Val batch:", x.shape, y.shape)
