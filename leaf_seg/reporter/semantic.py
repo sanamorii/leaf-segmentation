@@ -256,14 +256,14 @@ class SemanticTrainingReporter(BaseTrainingReporter):
         ax = axes[0, 2]
         ax.plot(epochs, series("metrics/overall_acc"), label="overall acc")
         ax.plot(epochs, series("metrics/mean_acc"), label="mean acc")
-        ax.set_title("Accuracy")
+        ax.set_title("Validation Accuracy")
         ax.set_xlabel("epoch")
         ax.set_ylabel("score")
         ax.legend()
 
         ax = axes[1, 0]
         ax.plot(epochs, series("metrics/freqw_acc"), label="freqw acc")
-        ax.set_title("FreqW Acc")
+        ax.set_title("Validation FreqW Acc")
         ax.set_xlabel("epoch")
         ax.set_ylabel("score")
         ax.legend()
