@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-import yaml
 import json
 import torch
 import numpy as np
@@ -14,10 +13,12 @@ from pathlib import Path
 from PIL import Image
 from glob import glob
 
+from leaf_seg.dataset.templates import SemanticDatasetSpec, SplitSpec
+from leaf_seg.dataset.utils import get_dataset_spec, get_split_spec
+
 
 logger = logging.getLogger(__name__)
 
-SplitKind = Literal["ratio", "files", "none"]
 
 def TRAIN_TFMS(
     image_size: tuple[int, int] = (512, 512),
@@ -86,26 +87,6 @@ class PlantDreamerData(Dataset):
         return image, mask
 
 
-@dataclass(frozen=True, kw_only=True)
-class DatasetSpec:
-    name: str
-    root: Path
-    task: Literal["semantic", "instance"]
-    image_dir: str = "images"
-    mask_dir: str = "masks"
-    ext: str = "png"
-    # manifest  ## e.g. root/manifest.jsonl
-
-@dataclass(frozen=True, kw_only=True)
-class SplitSpec:
-    kind: SplitKind
-    seed: int = 42
-    train_ratio: float = 0.8
-    val_ratio: float = 0.2
-    train_files: Optional[Path] = None
-    val_files: Optional[Path] = None
-
-
 def scan_pairs(root: Path, image_dir: str, mask_dir: str, ext: str) -> list[tuple[str, str]]:
     img_dir = root / image_dir
     msk_dir = root / mask_dir
@@ -126,7 +107,7 @@ def load_split_file_pairs(root: Path, image_dir: str, mask_dir: str, filelist: P
     names = [ln.strip() for ln in filelist.read_text(encoding="utf-8").splitlines() if ln.strip()]
     return [(str(img_dir / n), str(msk_dir / n)) for n in names]
 
-def resolve_pairs(spec: DatasetSpec, split: SplitSpec, shuffle: bool = True) -> tuple[list[tuple[str,str]], list[tuple[str,str]] | None]:
+def resolve_pairs(spec: SemanticDatasetSpec, split: SplitSpec, shuffle: bool = True) -> tuple[list[tuple[str,str]], list[tuple[str,str]] | None]:
 
     all_pairs = scan_pairs(spec.root, spec.image_dir, spec.mask_dir, spec.ext)
 
@@ -155,94 +136,6 @@ def resolve_pairs(spec: DatasetSpec, split: SplitSpec, shuffle: bool = True) -> 
     raise ValueError(f"Unknown split kind: {split.kind}")
 
 
-def load_registry(registry_path: str | Path) -> dict:
-    registry_path = Path(registry_path)
-
-    if not registry_path.exists():
-        raise FileNotFoundError(f"Registry YAML not found: {registry_path}")
-    
-    with registry_path.open(mode="r", encoding="utf-8") as f:
-        reg = yaml.safe_load(f)
-
-    if not isinstance(reg, dict):
-        raise ValueError("Registry YAML must be a mapping (dict) at the top level")
-
-    return reg
-
-def get_dataset_spec(dataset_id: str, registry_path: str | Path) -> DatasetSpec:
-    reg = load_registry(registry_path)
-
-    if dataset_id not in reg:
-        keys = sorted(k for k in reg.keys() if k != "splits")
-        raise KeyError(f"Unknown dataset id '{dataset_id}'. Available: {keys}")
-
-    cfg = reg[dataset_id]
-    if not isinstance(cfg, dict):
-        raise ValueError(f"Dataset entry '{dataset_id}' must map to a dict.")
-
-    root = cfg.get("root")
-    if root is None:
-        raise ValueError(f"Dataset '{dataset_id}' missing required key: root")
-    
-    task = cfg.get("task")
-    if task not in ("semantic", "instance"):
-        raise ValueError(f"Dataset '{dataset_id}' has invalid task '{task}'")
-    
-    return DatasetSpec(
-        name=dataset_id,
-        root=Path(root),
-        task=task,
-        image_dir=cfg.get("image_dir", "images"),
-        mask_dir=cfg.get("mask_dir", "masks"),
-        ext=cfg.get("ext", "png"),
-    )
-
-
-def _resolve_path(base_dir: Path, value: str | Path | None) -> Optional[Path]:
-    if value is None or base_dir is None:
-        return None
-    p = Path(value)
-    return p if p.is_absolute() else (base_dir / p)
-
-def get_split_spec(dataset_id: str, registry_path: str | Path) -> SplitSpec:
-    reg = load_registry(registry_path)
-    ds_cfg = reg.get(dataset_id)
-    if not isinstance(ds_cfg, dict):
-        raise KeyError(f"Unknown dataset id '{dataset_id}'.")
-
-    split_cfg = ds_cfg.get("split")
-
-    # default split if absent
-    if split_cfg is None:
-        return SplitSpec(kind="ratio", train_ratio=0.8, val_ratio=0.2, seed=42)
-
-    if not isinstance(split_cfg, dict):
-        raise ValueError(f"split for '{dataset_id}' must be a dict")
-
-    kind = split_cfg.get("kind", "ratio")
-    if kind not in ("ratio", "files", "none"):
-        raise ValueError(f"Invalid split kind '{kind}' for '{dataset_id}'")
-
-    if kind == "none":
-        return SplitSpec(kind="none")
-
-    seed = int(split_cfg.get("seed", 42))
-
-    if kind == "ratio":
-        tr = float(split_cfg.get("train_ratio", 0.8))
-        vr = float(split_cfg.get("val_ratio", 0.2))
-        if abs((tr + vr) - 1.0) > 1e-6:
-            raise ValueError(f"train_ratio + val_ratio must equal 1.0 (got {tr}+{vr})")
-        return SplitSpec(kind="ratio", seed=seed, train_ratio=tr, val_ratio=vr)
-
-    if kind == "files":
-        train_files = _resolve_path(ds_cfg.get("root"),split_cfg.get("train_files"))
-        val_files = _resolve_path(ds_cfg.get("root"),split_cfg.get("val_files"))
-        if train_files is None or val_files is None:
-            raise ValueError("files split requires train_files and val_files")
-        return SplitSpec(kind="files", seed=seed, train_files=train_files, val_files=val_files)
-
-
 def build_dataset(
     dataset_id: str,
     registry_path: str | Path,
@@ -253,7 +146,7 @@ def build_dataset(
     mean: Tuple[float, float, float] = (0.485, 0.456, 0.406),
     std: Tuple[float, float, float] = (0.229, 0.224, 0.225),
     shuffle: bool = True,
-) -> tuple[DataLoader, Optional[DataLoader], DatasetSpec, SplitSpec]:
+) -> tuple[DataLoader, Optional[DataLoader], SemanticDatasetSpec, SplitSpec]:
     spec = get_dataset_spec(dataset_id, registry_path)
     split = get_split_spec(dataset_id, registry_path)
 
@@ -270,7 +163,7 @@ def build_dataset(
     trn_img, trn_msk = zip(*train_pairs)
     train_ds = PlantDreamerData(trn_img, trn_msk, transforms=train_transforms)
 
-    val_ds: DataLoader | None = None
+    val_ds: Dataset | None = None
     if val_pairs is not None:
         val_img, val_msk = zip(*val_pairs)
         val_ds = PlantDreamerData(val_img, val_msk, transforms=val_transforms)
@@ -296,7 +189,7 @@ def build_dataloaders(
     std: Tuple[float, float, float] = (0.229, 0.224, 0.225),
     shuffle: bool = True,
     drop_last: bool = True,
-) -> tuple[DataLoader, Optional[DataLoader], DatasetSpec, SplitSpec]:
+) -> tuple[DataLoader, Optional[DataLoader], SemanticDatasetSpec, SplitSpec]:
 
     train_ds, val_ds, spec, split = build_dataset(
         dataset_id=dataset_id,
@@ -306,7 +199,6 @@ def build_dataloaders(
         image_size=image_size,
         mean=mean, std=std,
         shuffle=shuffle,
-        drop_last=drop_last,
     )
 
     train_loader = DataLoader(

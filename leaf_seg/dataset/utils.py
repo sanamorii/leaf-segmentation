@@ -1,6 +1,12 @@
 
+from pathlib import Path
+from typing import Optional
+
 import cv2
 import numpy as np
+import yaml
+
+from leaf_seg.dataset.templates import SemanticDatasetSpec, SplitSpec
 
 def rgb_to_class(mask, class_colors):
     mask = np.array(mask)
@@ -19,7 +25,96 @@ def decode_mask(mask, class_colors):
 
     return color_mask
 
-
 def overlay(image, color_mask, alpha=0.5):
     return cv2.addWeighted(image, 1 - alpha, color_mask, alpha, 0)
+
+
+
+def _resolve_path(base_dir: Path, value: str | Path | None) -> Optional[Path]:
+    if value is None or base_dir is None:
+        return None
+    p = Path(value)
+    return p if p.is_absolute() else (base_dir / p)
+
+
+def load_registry(registry_path: str | Path) -> dict:
+    registry_path = Path(registry_path)
+
+    if not registry_path.exists():
+        raise FileNotFoundError(f"Registry YAML not found: {registry_path}")
+
+    with registry_path.open(mode="r", encoding="utf-8") as f:
+        reg = yaml.safe_load(f)
+
+    if not isinstance(reg, dict):
+        raise ValueError("Registry YAML must be a mapping (dict) at the top level")
+
+    return reg
+
+
+def get_dataset_spec(dataset_id: str, registry_path: str | Path) -> SemanticDatasetSpec:
+    reg = load_registry(registry_path)
+
+    if dataset_id not in reg:
+        keys = sorted(k for k in reg.keys() if k != "splits")
+        raise KeyError(f"Unknown dataset id '{dataset_id}'. Available: {keys}")
+
+    cfg = reg[dataset_id]
+    if not isinstance(cfg, dict):
+        raise ValueError(f"Dataset entry '{dataset_id}' must map to a dict.")
+
+    root = cfg.get("root")
+    if root is None:
+        raise ValueError(f"Dataset '{dataset_id}' missing required key: root")
+
+    task = cfg.get("task")
+    if task not in ("semantic", "instance"):
+        raise ValueError(f"Dataset '{dataset_id}' has invalid task '{task}'")
+
+    return SemanticDatasetSpec(
+        name=dataset_id,
+        root=Path(root),
+        task=task,
+        image_dir=cfg.get("image_dir", "images"),
+        mask_dir=cfg.get("mask_dir", "masks"),
+        ext=cfg.get("ext", "png"),
+    )
+
+def get_split_spec(dataset_id: str, registry_path: str | Path) -> SplitSpec:
+    reg = load_registry(registry_path)
+    ds_cfg = reg.get(dataset_id)
+    if not isinstance(ds_cfg, dict):
+        raise KeyError(f"Unknown dataset id '{dataset_id}'.")
+
+    split_cfg = ds_cfg.get("split")
+
+    # default split if absent
+    if split_cfg is None:
+        return SplitSpec(kind="ratio", train_ratio=0.8, val_ratio=0.2, seed=42)
+
+    if not isinstance(split_cfg, dict):
+        raise ValueError(f"split for '{dataset_id}' must be a dict")
+
+    kind = split_cfg.get("kind", "ratio")
+    if kind not in ("ratio", "files", "none"):
+        raise ValueError(f"Invalid split kind '{kind}' for '{dataset_id}'")
+
+    if kind == "none":
+        return SplitSpec(kind="none")
+
+    seed = int(split_cfg.get("seed", 42))
+
+    if kind == "ratio":
+        tr = float(split_cfg.get("train_ratio", 0.8))
+        vr = float(split_cfg.get("val_ratio", 0.2))
+        if abs((tr + vr) - 1.0) > 1e-6:
+            raise ValueError(f"train_ratio + val_ratio must equal 1.0 (got {tr}+{vr})")
+        return SplitSpec(kind="ratio", seed=seed, train_ratio=tr, val_ratio=vr)
+
+    if kind == "files":
+        train_files = _resolve_path(ds_cfg.get("root"),split_cfg.get("train_files"))
+        val_files = _resolve_path(ds_cfg.get("root"),split_cfg.get("val_files"))
+        if train_files is None or val_files is None:
+            raise ValueError("files split requires train_files and val_files")
+        return SplitSpec(kind="files", seed=seed, train_files=train_files, val_files=val_files)
 
