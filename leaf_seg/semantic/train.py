@@ -371,7 +371,7 @@ def run(cfg: SemanticTrainConfig) -> str:
     cfg.output = os.path.join(cfg.output, f"{timestamp}-train-{model.name}")
     cfg.progress = resolve_progress_flag(cfg.progress)
 
-    train_loader, val_loader, _, _ = build_dataloaders(
+    train_loader, val_loader, spec, split = build_dataloaders(
         dataset_id=cfg.dataset,
         registry_path="data/datasets.yaml",
         batch_size=cfg.batch_size,
@@ -380,7 +380,7 @@ def run(cfg: SemanticTrainConfig) -> str:
 
     reporter = None
     if not cfg.no_report:
-        reporter = build_reporter(cfg=cfg, model_name = model.name)
+        reporter = build_reporter(cfg=cfg)
 
     return fit(
         model=model,

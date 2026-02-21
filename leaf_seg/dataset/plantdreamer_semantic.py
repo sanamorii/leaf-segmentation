@@ -5,7 +5,6 @@ import numpy as np
 import albumentations as A
 import logging
 
-from albumentations.pytorch import ToTensorV2
 from torch.utils.data import DataLoader, Dataset
 from sklearn.model_selection import train_test_split
 from typing import List, Literal, Tuple, Optional
@@ -14,42 +13,11 @@ from PIL import Image
 from glob import glob
 
 from leaf_seg.dataset.templates import SemanticDatasetSpec, SplitSpec
-from leaf_seg.dataset.utils import get_dataset_spec, get_split_spec
+from leaf_seg.dataset.utils import TRAIN_TFMS, VAL_TFMS, get_dataset_spec, get_split_spec
 
 
 logger = logging.getLogger(__name__)
 
-
-def TRAIN_TFMS(
-    image_size: tuple[int, int] = (512, 512),
-    mean: Tuple[float, float, float] = (0.485, 0.456, 0.406),
-    std: Tuple[float, float, float] = (0.229, 0.224, 0.225),
-) -> A.Compose:
-    h, w = image_size
-    return A.Compose(
-        [
-            A.Resize(h, w),
-            A.HorizontalFlip(p=0.5),
-            A.RandomBrightnessContrast(p=0.2),
-            A.Normalize(mean=mean, std=std),
-            ToTensorV2(),
-        ]
-    )
-
-
-def VAL_TFMS(
-    image_size: tuple[int, int] = (512, 512),
-    mean: Tuple[float, float, float] = (0.485, 0.456, 0.406),
-    std: Tuple[float, float, float] = (0.229, 0.224, 0.225),
-) -> A.Compose:
-    h, w = image_size
-    return A.Compose(
-        [
-            A.Resize(h, w),
-            A.Normalize(mean=mean, std=std),
-            ToTensorV2(),
-        ]
-    )
 
 class PlantDreamerData(Dataset):
     """

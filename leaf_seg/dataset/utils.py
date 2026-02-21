@@ -1,12 +1,50 @@
 
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
+import albumentations as A
+from albumentations.pytorch import ToTensorV2
 import cv2
 import numpy as np
 import yaml
 
-from leaf_seg.dataset.templates import SemanticDatasetSpec, SplitSpec
+from leaf_seg.dataset.templates import InstanceDatasetSpec, SemanticDatasetSpec, SplitSpec
+
+
+
+def TRAIN_TFMS(
+    image_size: tuple[int, int] = (512, 512),
+    mean: Tuple[float, float, float] = (0.485, 0.456, 0.406),
+    std: Tuple[float, float, float] = (0.229, 0.224, 0.225),
+) -> A.Compose:
+    h, w = image_size
+    return A.Compose(
+        [
+            A.Resize(h, w),
+            A.HorizontalFlip(p=0.5),
+            A.RandomBrightnessContrast(p=0.2),
+            A.Normalize(mean=mean, std=std),
+            ToTensorV2(),
+        ]
+    )
+
+
+def VAL_TFMS(
+    image_size: tuple[int, int] = (512, 512),
+    mean: Tuple[float, float, float] = (0.485, 0.456, 0.406),
+    std: Tuple[float, float, float] = (0.229, 0.224, 0.225),
+) -> A.Compose:
+    h, w = image_size
+    return A.Compose(
+        [
+            A.Resize(h, w),
+            A.Normalize(mean=mean, std=std),
+            ToTensorV2(),
+        ]
+    )
+
+
+
 
 def rgb_to_class(mask, class_colors):
     mask = np.array(mask)
@@ -70,15 +108,26 @@ def get_dataset_spec(dataset_id: str, registry_path: str | Path) -> SemanticData
     task = cfg.get("task")
     if task not in ("semantic", "instance"):
         raise ValueError(f"Dataset '{dataset_id}' has invalid task '{task}'")
+    
+    if task == "semantic":
+        return SemanticDatasetSpec(
+            name=dataset_id,
+            root=Path(root),
+            task=task,
+            image_dir=cfg.get("image_dir", "gt"),
+            mask_dir=cfg.get("mask_dir", "masks"),
+            ext=cfg.get("ext", "png"),
+        )
 
-    return SemanticDatasetSpec(
-        name=dataset_id,
-        root=Path(root),
-        task=task,
-        image_dir=cfg.get("image_dir", "images"),
-        mask_dir=cfg.get("mask_dir", "masks"),
-        ext=cfg.get("ext", "png"),
-    )
+    else:  # instance
+        return InstanceDatasetSpec(
+            name=dataset_id,
+            root=Path(root),
+            image_dir=cfg.get("image_dir", "gt"),
+            ann=Path(cfg.get("ann", "coco.json")),
+            remap=cfg.get("remap", True),
+            filter_empty=cfg.get("filter_empty", True),
+        )
 
 def get_split_spec(dataset_id: str, registry_path: str | Path) -> SplitSpec:
     reg = load_registry(registry_path)
@@ -117,4 +166,3 @@ def get_split_spec(dataset_id: str, registry_path: str | Path) -> SplitSpec:
         if train_files is None or val_files is None:
             raise ValueError("files split requires train_files and val_files")
         return SplitSpec(kind="files", seed=seed, train_files=train_files, val_files=val_files)
-

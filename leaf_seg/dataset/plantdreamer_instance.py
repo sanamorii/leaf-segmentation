@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import torch
 import logging
@@ -10,6 +10,9 @@ from pycocotools import mask as mask_utils
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
 from PIL import Image
+
+from leaf_seg.dataset.templates import InstanceDatasetSpec, SplitSpec
+from leaf_seg.dataset.utils import TRAIN_TFMS, VAL_TFMS, get_dataset_spec, get_split_spec
 
 logger = logging.getLogger(__name__)
 
@@ -207,9 +210,74 @@ class LeafCoco(Dataset):
         return img_t, target
 
 
+import json
+import argparse
+from collections import Counter
+
+from sklearn.model_selection import train_test_split
+from skmultilearn.model_selection import iterative_train_test_split
+import numpy as np
+
+
+
 def coco_collate_fn(batch):
     images, targets = zip(*batch)
     return list(images), list(targets)
+
+
+def resolve_split(spec: InstanceDatasetSpec, split: SplitSpec, shuffle: bool = True):
+
+    if split.kind == "none":
+        ...
+
+    if split.kind == "file":
+        ...
+
+    if split.kind == "ratio":
+
+        if not (0.0 < split.train_ratio < 1.0) or not (0.0 < split.val_ratio < 1.0):
+            raise ValueError("ratios must be in (0,1)")
+        
+        if abs((split.train_ratio + split.val_ratio) - 1.0) > 1e-6:
+            raise ValueError("train_ratio + val_ratio must equal 1.0")
+        
+        trn, val = split_coco(ann=spec.ann, train_path="coco_train.json", val_path="coco_val.json")
+        
+
+def build_dataloader(
+    dataset_id: str,
+    registry_path: str | Path,
+    *,
+    train_transforms: Optional[A.Compose] = None,
+    val_transforms: Optional[A.Compose] = None,
+    image_size: tuple[int, int] = (512, 512),
+    mean: Tuple[float, float, float] = (0.485, 0.456, 0.406),
+    std: Tuple[float, float, float] = (0.229, 0.224, 0.225),
+    shuffle: bool = True,
+):
+    ...
+    # spec = get_dataset_spec(dataset_id, registry_path)
+    # split = get_split_spec(dataset_id, registry_path)
+
+    # if train_transforms is None:
+    #     train_transforms = TRAIN_TFMS(image_size, mean, std)
+    # if val_transforms is None:
+    #     val_transforms = VAL_TFMS(image_size, mean, std)
+    
+    # train_pairs, val_pairs = resolve_pairs(spec, split, shuffle)
+
+    # trn_img, trn_msk = zip(*train_pairs)
+    # train_ds = PlantDreamerData(trn_img, trn_msk, transforms=train_transforms)
+
+    # val_ds: Dataset | None = None
+    # if val_pairs is not None:
+    #     val_img, val_msk = zip(*val_pairs)
+    #     val_ds = PlantDreamerData(val_img, val_msk, transforms=val_transforms)
+
+    # logger.info("Dataset=%s root=%s task=%s", spec.name, spec.root, spec.task)
+    # logger.info("Split kind=%s train=%d val=%s", split.kind, len(train_ds), (len(val_pairs) if val_pairs else None))
+
+    # return train_ds, val_ds, spec, split
 
 
 def get_dataloader(

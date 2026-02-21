@@ -4,7 +4,7 @@ from leaf_seg.common.torch_utils import get_default_device
 
 
 @dataclass(kw_only=True)
-class SemanticBaseConfig:
+class BaseConfig:
     model: str
     encoder: str
     dataset: str
@@ -17,7 +17,7 @@ class SemanticBaseConfig:
     verbosity: int = 0
 
 @dataclass(kw_only=True)
-class SemanticTrainConfig(SemanticBaseConfig):
+class SemanticTrainConfig(BaseConfig):
     lr: float = 1e-3
     epochs: int = 100
     gradient_clipping: float = 0.1
@@ -46,7 +46,7 @@ class SemanticFinetuneConfig(SemanticTrainConfig):
     strict_load: bool = True
 
 @dataclass(kw_only=True)
-class SemanticEvalConfig(SemanticBaseConfig):
+class SemanticEvalConfig(BaseConfig):
     checkpoint: str
     num_classes: int
     output: str = "results/semantic"
@@ -54,7 +54,7 @@ class SemanticEvalConfig(SemanticBaseConfig):
     resize: tuple[int,int] = (512,512)
 
 @dataclass(kw_only=True)
-class SemanticInferConfig(SemanticBaseConfig):
+class SemanticInferConfig(BaseConfig):
     image: str | None = None
     images: str | None = None
     output: str = "results/infer_semantic"

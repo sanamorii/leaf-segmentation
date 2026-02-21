@@ -6,6 +6,8 @@ import torch.nn as nn
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 
+from leaf_seg.dataset.templates import SplitSpec
+from leaf_seg.dataset.plantdreamer_semantic import SemanticDatasetSpec
 from leaf_seg.reporter.semantic import SemanticTrainingReporter
 from leaf_seg.semantic.config import SemanticTrainConfig
 from leaf_seg.models.modelling import get_smp_model as get_model
@@ -22,7 +24,7 @@ def setup_model(cfg: SemanticTrainConfig) -> nn.Module:
     model.name = f"{model.__class__.__name__.lower()}_{cfg.encoder}_{cfg.dataset}"
     return model
 
-def build_reporter(model_name: str, cfg: SemanticTrainConfig) -> SemanticTrainingReporter:
+def build_reporter(cfg: SemanticTrainConfig) -> SemanticTrainingReporter:
     timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     # run_name = f"{model_name}-{cfg.epochs}-{timestamp}-report"
     report_dir = Path(cfg.output)
