@@ -252,9 +252,9 @@ class LeafCoco(Dataset):
             new_areas: List[float] = []
             new_iscrowd: List[int] = []
 
-            for i, (mask_np, box, lab) in enumerate(zip(t_masks,t_bboxes, t_labels)):
+            for i, (mask_np, box, lab) in enumerate(zip(t_masks, t_bboxes, t_labels)):
                 box = list(map(float, box))
-                box = self._clamp_xyxy(box)
+                box = self._clamp_xyxy(box, w=out_w, h=out_h)
                 if box is None:
                     continue
                 
@@ -270,9 +270,13 @@ class LeafCoco(Dataset):
                 if mask_arr.sum() == 0:
                     continue
 
+                box_from_mask = self._mask_to_box(mask_arr)
+                if box_from_mask is None:
+                    continue
+
                 new_masks.append(torch.from_numpy(mask_arr).to(torch.uint8))
-                new_boxes.append(box)
-                new_labels.append(int(label))
+                new_boxes.append(box_from_mask)
+                new_labels.append(int(lab))
                 new_areas.append(float(mask_arr.sum()))
                 #new_iscrowd.append(int(iscrowd[i]))
                 new_iscrowd.append(0)  # don't care
@@ -340,10 +344,10 @@ def build_dataset(
     # NOTE: for some stupid reason pytorch's maskrcnn already performs transforms (normalisation, resizing)
     #     vision/torchvision/models/detection/faster_rcnn.py:281. do not transform here
 
-    # if train_transforms is None:
-    #     train_transforms = TRAIN_TFMS(image_size, mean, std)
-    # if val_transforms is None:
-    #     val_transforms = VAL_TFMS(image_size, mean, std)
+    if train_transforms is None:
+        train_transforms = TRAIN_TFMS(image_size=image_size)
+    if val_transforms is None:
+        val_transforms = VAL_TFMS(image_size=image_size)
 
     if not spec.train_set or not spec.val_set:
         raise ValueError("leafseg requires train_files and val_files requires")
