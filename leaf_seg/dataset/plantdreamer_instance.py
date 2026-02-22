@@ -11,7 +11,7 @@ from albumentations.pytorch import ToTensorV2
 from PIL import Image
 
 from leaf_seg.dataset.templates import InstanceDatasetSpec
-from leaf_seg.dataset.utils import TRAIN_TFMS, VAL_TFMS, get_dataset_spec
+from leaf_seg.dataset.utils import get_dataset_spec
 
 logger = logging.getLogger(__name__)
 
@@ -206,8 +206,8 @@ class LeafCoco(Dataset):
             if m.sum() == 0:
                 continue
 
-            box  = self._xywh_to_xyxy(ann["bbox"])
-            box  = self._clamp_xyxy(boxes_xyxy, w=w, h=h)
+            box = self._xywh_to_xyxy(ann["bbox"])
+            box = self._clamp_xyxy(box, w=w, h=h)
             if box is None:
                 continue
 
