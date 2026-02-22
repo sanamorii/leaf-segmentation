@@ -12,40 +12,6 @@ from leaf_seg.dataset.templates import InstanceDatasetSpec, SemanticDatasetSpec
 
 
 
-def TRAIN_TFMS(
-    image_size: tuple[int, int] = (512, 512),
-    mean: Tuple[float, float, float] = (0.485, 0.456, 0.406),
-    std: Tuple[float, float, float] = (0.229, 0.224, 0.225),
-) -> A.Compose:
-    h, w = image_size
-    return A.Compose(
-        [
-            A.Resize(h, w),
-            A.HorizontalFlip(p=0.5),
-            A.RandomBrightnessContrast(p=0.2),
-            A.Normalize(mean=mean, std=std),
-            ToTensorV2(),
-        ]
-    )
-
-
-def VAL_TFMS(
-    image_size: tuple[int, int] = (512, 512),
-    mean: Tuple[float, float, float] = (0.485, 0.456, 0.406),
-    std: Tuple[float, float, float] = (0.229, 0.224, 0.225),
-) -> A.Compose:
-    h, w = image_size
-    return A.Compose(
-        [
-            A.Resize(h, w),
-            A.Normalize(mean=mean, std=std),
-            ToTensorV2(),
-        ]
-    )
-
-
-
-
 def rgb_to_class(mask, class_colors):
     mask = np.array(mask)
     class_mask = np.zeros((mask.shape[0], mask.shape[1]), dtype=np.uint8)

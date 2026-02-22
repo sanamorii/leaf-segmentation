@@ -16,6 +16,53 @@ from leaf_seg.dataset.utils import TRAIN_TFMS, VAL_TFMS, get_dataset_spec
 logger = logging.getLogger(__name__)
 
 
+def TRAIN_TFMS(image_size: tuple[int, int] = None,) -> A.Compose:
+    tfms = []
+    if image_size is not None:
+        h, w = image_size
+        tfms.append(A.Resize(h, w))
+
+    tfms += [
+        A.HorizontalFlip(p=0.5),
+        A.RandomBrightnessContrast(p=0.2),
+        ToTensorV2(),
+    ]
+
+    return A.Compose(
+        tfms,
+        bbox_params=A.BboxParams(
+            format="pascal_voc",
+            label_fields=["labels"],
+            min_area=0.0,
+            min_visibility=0.0,
+            # clip=True,
+        )
+    )
+
+def VAL_TFMS(image_size: Optional[tuple[int, int]] = None,) -> A.Compose:
+    """
+    Validation transforms: keep deterministic.
+    No Normalize for torchvision Mask R-CNN.
+    """
+    tfms = []
+    if image_size is not None:
+        h, w = image_size
+        tfms.append(A.Resize(h, w))
+
+    tfms += [
+        ToTensorV2(),
+    ]
+
+    return A.Compose(
+        tfms,
+        bbox_params=A.BboxParams(
+            format="pascal_voc",
+            label_fields=["labels"],
+            min_area=0.0,
+            min_visibility=0.0,
+        ),
+    )
+
 class LeafCoco(Dataset):
     """
     returns:
@@ -38,7 +85,7 @@ class LeafCoco(Dataset):
         filter_empty: bool = True,
     ):
         self.image_dir = Path(image_dir)
-        self.coco = COCO(ann_file)
+        self.coco : COCO = COCO(ann_file)
         self.img_ids = list(self.coco.imgs.keys())
         self.transforms : A.Compose = transforms
         self.filter_empty = filter_empty
@@ -92,42 +139,23 @@ class LeafCoco(Dataset):
             raise FileNotFoundError(f"Image not found: {path}")
         return Image.open(path).convert("RGB")
 
-    def _ann_to_mask(self, ann: Dict[str, Any], height: int, width: int) -> np.ndarray:
-
-        seg = ann.get("segmentation", None)
-        if seg is None:
-            return np.zeros((height, width), dtype=np.uint8)
-
-        if isinstance(seg, list):
-            rles = mask_utils.frPyObjects(seg, height, width)
-            rle = mask_utils.merge(rles)
-            m = mask_utils.decode(rle)
-            return (m > 0).astype(np.uint8)
-
-        if isinstance(seg, dict) and "counts" in seg and "size" in seg:
-            # RLE can be compressed (counts as str/bytes) or uncompressed (counts as list).
-            if isinstance(seg["counts"], list):
-                rle = mask_utils.frPyObjects(seg, height, width)
-                m = mask_utils.decode(rle)
-                if m.ndim == 3:
-                    m = m[:, :, 0]
-                return (m > 0).astype(np.uint8)
-
-            rle = seg
-            if isinstance(rle["counts"], str):
-                rle = dict(rle)
-                rle["counts"] = rle["counts"].encode("ascii")
-            m = mask_utils.decode(rle)
-            if m.ndim == 3:
-                m = m[:, :, 0]
-            return (m > 0).astype(np.uint8)
-
-        return np.zeros((height, width), dtype=np.uint8)
-
     @staticmethod
     def _xywh_to_xyxy(box: List[float]) -> List[float]:
         x, y, w, h = box
         return [x, y, x + w, y + h]
+    
+    @staticmethod
+    def _clamp_xyxy(box: List[float], w: int, h: int) -> Optional[List[float]]:
+        x0, y0, x1, y1 = box
+        # Clamp to image bounds (allow x1==w, y1==h; torchvision can handle this)
+        x0 = float(max(0.0, min(x0, float(w))))
+        y0 = float(max(0.0, min(y0, float(h))))
+        x1 = float(max(0.0, min(x1, float(w))))
+        y1 = float(max(0.0, min(y1, float(h))))
+
+        if x1 <= x0 or y1 <= y0:
+            return None
+        return [x0, y0, x1, y1]
 
     @staticmethod
     def _mask_to_box(mask: np.ndarray) -> list[float] | None:
@@ -142,42 +170,51 @@ class LeafCoco(Dataset):
             return None
         return [xmin, ymin, xmax, ymax]
 
+    @staticmethod
+    def _to_float01_image_tensor(img_t: torch.Tensor) -> torch.Tensor:
+
+        if img_t.dtype == torch.uint8:
+            return img_t.float().div(255.0)
+        #if used ToTensorV2(always_apply=True) with float output or other custom conversion
+        # if not torch.is_floating_point(img_t):
+        img_t = img_t.float()
+        # if it looks like [0,255] floats, scale down.
+        if img_t.max().item() > 1.5:  #heuristic
+            img_t = img_t.div(255.0)
+
+        return img_t
+
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         img_id = self.img_ids[idx]
         img_info = self.coco.loadImgs([img_id])[0]
 
         pil_img = self._load_image(img_info)
-        w, h = pil_img.size
+        w, h = pil_img.size  # PIL: (W, H)
 
         ann_ids = self.coco.getAnnIds(imgIds=[img_id])
         anns = self.coco.loadAnns(ann_ids)
 
-        boxes = []
-        labels = []
-        masks = []
-        areas = []
-        iscrowd = []
+        boxes_xyxy: List[List[float]] = []
+        labels: List[int] = []
+        masks: List[np.ndarray] = []
+        areas: List[float] = []
+        iscrowd: List[int] = []
 
         for ann in anns:
-            bbox_xyxy = self._xywh_to_xyxy(ann["bbox"])
-            x0, y0, x1, y1 = bbox_xyxy
 
-            x0 = max(0.0, min(x0, w - 1.0))
-            y0 = max(0.0, min(y0, h - 1.0))
-            x1 = max(0.0, min(x1, w * 1.0))
-            y1 = max(0.0, min(y1, h * 1.0))
-
-            if x1 <= x0 or y1 <= y0:
+            m = self.coco.annToMask(ann).astype(np.uint8) # [H, W] {0, 1}
+            if m.sum() == 0:
                 continue
 
-            m = self._ann_to_mask(ann, h, w)
-            if m.sum() == 0:
+            box  = self._xywh_to_xyxy(ann["bbox"])
+            box  = self._clamp_xyxy(boxes_xyxy, w=w, h=h)
+            if box is None:
                 continue
 
             cat_id = int(ann["category_id"])
             label = self.cat_id_to_contiguous[cat_id] if self.remap else cat_id
 
-            boxes.append([x0, y0, x1, y1])
+            boxes_xyxy.append(box)
             labels.append(label)
             masks.append(m)
             areas.append(float(ann.get("area", m.sum())))
@@ -186,36 +223,59 @@ class LeafCoco(Dataset):
         img_np = np.array(pil_img, dtype=np.uint8)
 
         if self.transforms is not None:
-            transformed = self.transforms(image=img_np, masks=masks)
-            img_t = transformed["image"]
-            if not torch.is_floating_point(img_t):
-                img_t = img_t.float().div(255.0)
-            else:
-                img_t = img_t.float()
+            transformed = self.transforms(
+                image=img_np,
+                masks=masks,
+                bboxes=boxes_xyxy,
+                labels=labels,
+            )
 
-            transformed_masks = transformed.get("masks", [])
+
+            img_t = transformed["image"]
+            img_t = self._to_float01_image_tensor(img_t)
+
+            # if not torch.is_floating_point(img_t):
+            #     img_t = img_t.float().div(255.0)
+            # else:
+            #     img_t = img_t.float()
+
+            t_masks = transformed.get("masks", [])
+            t_bboxes = transformed.get("bboxes", [])
+            t_labels = transformed.get("labels", [])
+
             out_h, out_w = int(img_t.shape[-2]), int(img_t.shape[-1])
 
-            new_boxes = []
-            new_labels = []
-            new_masks = []
-            new_areas = []
-            new_iscrowd = []
+            # filter out any degenerate boxes (albumentations can drop/clamp depending on params)
+            new_boxes: List[List[float]] = []
+            new_labels: List[int] = []
+            new_masks: List[torch.Tensor] = []
+            new_areas: List[float] = []
+            new_iscrowd: List[int] = []
 
-            for mask_np, label, crowd in zip(transformed_masks, labels, iscrowd):
+            for i, (mask_np, box, lab) in enumerate(zip(t_masks,t_bboxes, t_labels)):
+                box = list(map(float, box))
+                box = self._clamp_xyxy(box)
+                if box is None:
+                    continue
+                
+                # masks returned from albumentations correspond to original ordering;
+                # when boxes get dropped, we should also drop masks by same index if possible.
+                if i >= len(t_masks):
+                    continue
+
                 mask_arr = np.asarray(mask_np)
                 if mask_arr.ndim > 2:
                     mask_arr = np.squeeze(mask_arr)
                 mask_arr = (mask_arr > 0).astype(np.uint8)
-                box = self._mask_to_box(mask_arr)
-                if box is None:
+                if mask_arr.sum() == 0:
                     continue
 
                 new_masks.append(torch.from_numpy(mask_arr).to(torch.uint8))
                 new_boxes.append(box)
                 new_labels.append(int(label))
                 new_areas.append(float(mask_arr.sum()))
-                new_iscrowd.append(int(crowd))
+                #new_iscrowd.append(int(iscrowd[i]))
+                new_iscrowd.append(0)  # don't care
 
             if len(new_boxes) == 0:
                 boxes_t = torch.zeros((0, 4), dtype=torch.float32)
@@ -230,16 +290,17 @@ class LeafCoco(Dataset):
                 areas_t = torch.tensor(new_areas, dtype=torch.float32)
                 iscrowd_t = torch.tensor(new_iscrowd, dtype=torch.int64)
         else:
-            img_t = torch.from_numpy(img_np).permute(2, 0, 1).float() / 255.0
+            img_t = torch.from_numpy(img_np).permute(2, 0, 1).float() # / 255.0
+            img_t = self._to_float01_image_tensor(img_t)
 
-            if len(boxes) == 0:
+            if len(boxes_xyxy) == 0:
                 boxes_t = torch.zeros((0, 4), dtype=torch.float32)
                 labels_t = torch.zeros((0,), dtype=torch.int64)
                 masks_t = torch.zeros((0, h, w), dtype=torch.uint8)
                 areas_t = torch.zeros((0,), dtype=torch.float32)
                 iscrowd_t = torch.zeros((0,), dtype=torch.int64)
             else:
-                boxes_t = torch.tensor(boxes, dtype=torch.float32)
+                boxes_t = torch.tensor(boxes_xyxy, dtype=torch.float32)
                 labels_t = torch.tensor(labels, dtype=torch.int64)
                 masks_t = torch.from_numpy(np.stack(masks, axis=0)).to(torch.uint8)
                 areas_t = torch.tensor(areas, dtype=torch.float32)
@@ -275,10 +336,14 @@ def build_dataset(
 ):
     spec = get_dataset_spec(dataset_id, registry_path)
     
-    if train_transforms is None:
-        train_transforms = TRAIN_TFMS(image_size, mean, std)
-    if val_transforms is None:
-        val_transforms = VAL_TFMS(image_size, mean, std)
+
+    # NOTE: for some stupid reason pytorch's maskrcnn already performs transforms (normalisation, resizing)
+    #     vision/torchvision/models/detection/faster_rcnn.py:281. do not transform here
+
+    # if train_transforms is None:
+    #     train_transforms = TRAIN_TFMS(image_size, mean, std)
+    # if val_transforms is None:
+    #     val_transforms = VAL_TFMS(image_size, mean, std)
 
     if not spec.train_set or not spec.val_set:
         raise ValueError("leafseg requires train_files and val_files requires")
