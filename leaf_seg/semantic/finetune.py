@@ -5,11 +5,12 @@ import os
 import torch
 import torch.nn as nn
 
+from leaf_seg.common.build import build_scheduler
 from leaf_seg.common.loss.cedice import CEDiceLoss
 from leaf_seg.common.verbose import resolve_progress_flag
 from leaf_seg.dataset.plantdreamer_semantic import build_dataloaders
-from leaf_seg.semantic.config import SemanticFinetuneConfig
-from leaf_seg.semantic.build import build_reporter, build_scheduler, setup_model
+from leaf_seg.common.config import SemanticFinetuneConfig
+from leaf_seg.semantic.build import build_reporter, setup_model
 from leaf_seg.models.utils import load_ckpt
 from leaf_seg.semantic.train import fit
 

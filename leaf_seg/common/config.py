@@ -17,6 +17,26 @@ class BaseConfig:
     verbosity: int = 0
 
 @dataclass(kw_only=True)
+class InstanceTrainConfig(BaseConfig):
+    model: str | None = None
+    encoder: str | None = None
+
+    lr: float = 1e-3
+    epochs: int = 100
+    gradient_clipping: float = 0.1
+    patience: int = -1  # 0 <= off | 0 > on
+
+    resume: str | None = None
+    use_amp: bool = False
+
+    output: str = "checkpoints/semantic/train"
+
+    metric_to_track: str | None = "segm_AP"
+    no_report: bool = False
+    report_every: int = 1
+    progress: bool | None = None  #TODO: rename to verbosity
+
+@dataclass(kw_only=True)
 class SemanticTrainConfig(BaseConfig):
     lr: float = 1e-3
     epochs: int = 100
@@ -28,7 +48,7 @@ class SemanticTrainConfig(BaseConfig):
 
     output: str = "checkpoints/semantic/train"
 
-    monitor_metric: str | None = "mean_iou"
+    metric_to_track: str | None = "mean_iou"
     no_report: bool = False
     report_every: int = 1
     progress: bool | None = None  #TODO: rename to verbosity

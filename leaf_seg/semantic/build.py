@@ -1,15 +1,10 @@
 import datetime
 from pathlib import Path
 
-import torch
 import torch.nn as nn
-from torch.optim import Optimizer
-from torch.optim.lr_scheduler import LRScheduler
 
-from leaf_seg.dataset.templates import SplitSpec
-from leaf_seg.dataset.plantdreamer_semantic import SemanticDatasetSpec
 from leaf_seg.reporter.semantic import SemanticTrainingReporter
-from leaf_seg.semantic.config import SemanticTrainConfig
+from leaf_seg.common.config import SemanticTrainConfig
 from leaf_seg.models.modelling import get_smp_model as get_model
 
 
@@ -30,7 +25,7 @@ def build_reporter(cfg: SemanticTrainConfig) -> SemanticTrainingReporter:
     report_dir = Path(cfg.output)
     reporter = SemanticTrainingReporter(
         output_dir=report_dir,
-        monitor_metric=cfg.monitor_metric,
+        monitor_metric=cfg.metric_to_track,
         plot_every=max(1, int(cfg.report_every)),
         append=bool(cfg.resume),
     )
@@ -48,7 +43,7 @@ def build_reporter(cfg: SemanticTrainConfig) -> SemanticTrainingReporter:
         "resume": cfg.resume,
         "use_amp": bool(cfg.use_amp),
         "gradient_clipping": cfg.gradient_clipping,
-        "montior_metric": cfg.monitor_metric,
+        "montior_metric": cfg.metric_to_track,
         
         # TODO: patience and weights
     }
@@ -56,10 +51,3 @@ def build_reporter(cfg: SemanticTrainConfig) -> SemanticTrainingReporter:
     reporter.write_metadata(meta)
     return reporter
 
-def build_optimiser(model: nn.Module, lr: float) -> Optimizer:
-    return torch.optim.Adam(model.parameters(), lr=lr, betas=(0.9, 0.999), eps=1e-8)
-
-def build_scheduler(optimiser: Optimizer) -> LRScheduler:
-    return torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimiser, mode="min", factor=0.5, patience=3
-    )

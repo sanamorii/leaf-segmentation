@@ -1,19 +1,15 @@
-from dataclasses import dataclass
-import json
 import torch
 import numpy as np
 import albumentations as A
 import logging
 
 from torch.utils.data import DataLoader, Dataset
-from sklearn.model_selection import train_test_split
-from typing import List, Literal, Tuple, Optional
+from typing import Tuple, Optional
 from pathlib import Path
 from PIL import Image
-from glob import glob
 
-from leaf_seg.dataset.templates import SemanticDatasetSpec, SplitSpec
-from leaf_seg.dataset.utils import TRAIN_TFMS, VAL_TFMS, get_dataset_spec, get_split_spec
+from leaf_seg.dataset.templates import SemanticDatasetSpec
+from leaf_seg.dataset.utils import TRAIN_TFMS, VAL_TFMS, get_dataset_spec
 
 
 logger = logging.getLogger(__name__)
@@ -54,7 +50,7 @@ class PlantDreamerData(Dataset):
 
         return image, mask
 
-
+# TODO: another use for this...
 def scan_pairs(root: Path, image_dir: str, mask_dir: str, ext: str) -> list[tuple[str, str]]:
     img_dir = root / image_dir
     msk_dir = root / mask_dir
@@ -75,33 +71,32 @@ def load_split_file_pairs(root: Path, image_dir: str, mask_dir: str, filelist: P
     names = [ln.strip() for ln in filelist.read_text(encoding="utf-8").splitlines() if ln.strip()]
     return [(str(img_dir / n), str(msk_dir / n)) for n in names]
 
-def resolve_pairs(spec: SemanticDatasetSpec, split: SplitSpec, shuffle: bool = True) -> tuple[list[tuple[str,str]], list[tuple[str,str]] | None]:
+# def resolve_pairs(spec: SemanticDatasetSpec, split: SplitSpec, shuffle: bool = True) -> tuple[list[tuple[str,str]], list[tuple[str,str]] | None]:
+#     all_pairs = scan_pairs(spec.root, spec.image_dir, spec.mask_dir, spec.ext)
 
-    all_pairs = scan_pairs(spec.root, spec.image_dir, spec.mask_dir, spec.ext)
-
-    if split.kind ==  "none":
-        return all_pairs, None
+#     if split.kind ==  "none":
+#         return all_pairs, None
     
-    if split.kind ==  "files":
-        if not split.train_files or not split.val_files:
-            raise ValueError("file split requires train_files and val_files")
-        train_pairs = load_split_file_pairs(spec.root, spec.image_dir, spec.mask_dir, split.train_files)
-        val_pairs = load_split_file_pairs(spec.root, spec.image_dir, spec.mask_dir, split.val_files)
-        return train_pairs, val_pairs
+#     if split.kind ==  "files":
+#         if not split.train_files or not split.val_files:
+#             raise ValueError("file split requires train_files and val_files")
+#         train_pairs = load_split_file_pairs(spec.root, spec.image_dir, spec.mask_dir, split.train_files)
+#         val_pairs = load_split_file_pairs(spec.root, spec.image_dir, spec.mask_dir, split.val_files)
+#         return train_pairs, val_pairs
 
-    if split.kind == "ratio":
-        if not (0.0 < split.train_ratio < 1.0) or not (0.0 < split.val_ratio < 1.0):
-            raise ValueError("ratios must be in (0,1)")
+#     if split.kind == "ratio":
+#         if not (0.0 < split.train_ratio < 1.0) or not (0.0 < split.val_ratio < 1.0):
+#             raise ValueError("ratios must be in (0,1)")
         
-        if abs((split.train_ratio + split.val_ratio) - 1.0) > 1e-6:
-            raise ValueError("train_ratio + val_ratio must equal 1.0")
+#         if abs((split.train_ratio + split.val_ratio) - 1.0) > 1e-6:
+#             raise ValueError("train_ratio + val_ratio must equal 1.0")
         
-        train_pairs, val_pairs = train_test_split(
-            all_pairs, test_size=split.val_ratio, random_state=split.seed, shuffle=shuffle
-        )
-        return train_pairs, val_pairs
+#         train_pairs, val_pairs = train_test_split(
+#             all_pairs, test_size=split.val_ratio, random_state=split.seed, shuffle=shuffle
+#         )
+#         return train_pairs, val_pairs
     
-    raise ValueError(f"Unknown split kind: {split.kind}")
+#     raise ValueError(f"Unknown split kind: {split.kind}")
 
 
 def build_dataset(
@@ -113,10 +108,9 @@ def build_dataset(
     image_size: tuple[int, int] = (512, 512),
     mean: Tuple[float, float, float] = (0.485, 0.456, 0.406),
     std: Tuple[float, float, float] = (0.229, 0.224, 0.225),
-    shuffle: bool = True,
-) -> tuple[DataLoader, Optional[DataLoader], SemanticDatasetSpec, SplitSpec]:
+) -> tuple[DataLoader, Optional[DataLoader], SemanticDatasetSpec]:
     spec = get_dataset_spec(dataset_id, registry_path)
-    split = get_split_spec(dataset_id, registry_path)
+    # split = get_split_spec(dataset_id, registry_path)
 
     if spec.task != "semantic": # TODO: implement instance dataloading
         raise NotImplementedError("instance not available")
@@ -126,20 +120,21 @@ def build_dataset(
     if val_transforms is None:
         val_transforms = VAL_TFMS(image_size, mean, std)
     
-    train_pairs, val_pairs = resolve_pairs(spec, split, shuffle)
+    if not spec.train_set or not spec.val_set:
+        raise ValueError("leafseg requires train_files and val_files requires")
+    train_pairs = load_split_file_pairs(spec.root, spec.image_dir, spec.mask_dir, spec.train_set)
+    val_pairs = load_split_file_pairs(spec.root, spec.image_dir, spec.mask_dir, spec.val_set)
 
     trn_img, trn_msk = zip(*train_pairs)
     train_ds = PlantDreamerData(trn_img, trn_msk, transforms=train_transforms)
 
-    val_ds: Dataset | None = None
-    if val_pairs is not None:
-        val_img, val_msk = zip(*val_pairs)
-        val_ds = PlantDreamerData(val_img, val_msk, transforms=val_transforms)
+    val_img, val_msk = zip(*val_pairs)
+    val_ds = PlantDreamerData(val_img, val_msk, transforms=val_transforms)
 
     logger.info("Dataset=%s root=%s task=%s", spec.name, spec.root, spec.task)
-    logger.info("Split kind=%s train=%d val=%s", split.kind, len(train_ds), (len(val_pairs) if val_pairs else None))
+    logger.info("Images=%d train=%d val=%s", (len(train_ds)+len(val_ds)), len(train_ds), len(val_ds))
 
-    return train_ds, val_ds, spec, split
+    return train_ds, val_ds, spec
 
 
 
@@ -157,9 +152,9 @@ def build_dataloaders(
     std: Tuple[float, float, float] = (0.229, 0.224, 0.225),
     shuffle: bool = True,
     drop_last: bool = True,
-) -> tuple[DataLoader, Optional[DataLoader], SemanticDatasetSpec, SplitSpec]:
+) -> tuple[DataLoader, DataLoader, SemanticDatasetSpec]:
 
-    train_ds, val_ds, spec, split = build_dataset(
+    train_ds, val_ds, spec = build_dataset(
         dataset_id=dataset_id,
         registry_path=registry_path,
         train_transforms=train_transforms,
@@ -178,21 +173,17 @@ def build_dataloaders(
         drop_last=drop_last,
     )
 
-    val_loader: DataLoader | None = None
-    if val_ds is not None:
-        val_loader = DataLoader(
-            val_ds,
-            batch_size=batch_size,
-            num_workers=num_workers,
-            pin_memory=pin_memory,
-            shuffle=False,
-            drop_last=False,
-        )
 
-    logger.info("Dataset=%s root=%s task=%s", spec.name, spec.root, spec.task)
-    logger.info("Split kind=%s train=%d val=%s", split.kind, len(train_ds), (len(val_ds) if val_ds else None))
+    val_loader = DataLoader(
+        val_ds,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        shuffle=False,
+        drop_last=False,
+    )
 
-    return train_loader, val_loader, spec, split
+    return train_loader, val_loader, spec
 
 
 # basic smoke test

@@ -24,7 +24,7 @@ def resolve_progress_flag(progress: bool | None) -> bool:
 
 def get_tqdm_bar(loader: DataLoader, epoch: int, epochs: int, stage: Literal['Train','Val'], progress: bool, leave:bool = False):
     return (
-        tqdm(loader, desc=f"Epoch {epoch+1}/{epochs} [{stage}]", leave=leave) 
+        tqdm(loader, desc=f"Epoch {epoch+1}/{epochs}, imgs {len(loader.dataset)} [{stage}]", leave=leave) 
         if progress 
         else loader
         )

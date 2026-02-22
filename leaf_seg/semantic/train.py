@@ -25,6 +25,7 @@ import segmentation_models_pytorch as smp
 import segmentation_models_pytorch.losses as smp_losses
 from segmentation_models_pytorch.base.model import SegmentationModel
 
+from leaf_seg.common.build import build_optimiser, build_scheduler
 from leaf_seg.dataset.utils import rgb_to_class
 from leaf_seg.dataset.plantdreamer_semantic import build_dataloaders
 from leaf_seg.common.loss.cedice import CEDiceLoss
@@ -33,8 +34,8 @@ from leaf_seg.common.verbose import get_tqdm_bar, resolve_progress_flag
 from leaf_seg.models.utils import create_ckpt, save_ckpt, load_ckpt
 from leaf_seg.models.modelling import get_smp_model
 from leaf_seg.semantic.metrics import StreamSegMetrics
-from leaf_seg.semantic.build import build_optimiser, build_reporter, build_scheduler, setup_model
-from leaf_seg.semantic.config import SemanticTrainConfig
+from leaf_seg.semantic.build import build_reporter, setup_model
+from leaf_seg.common.config import SemanticTrainConfig
 from leaf_seg.reporter.semantic import SemanticTrainingReporter
 
 
@@ -265,7 +266,7 @@ def fit(
         validation_stats = ckpt.get("validation_stats", None)
         if validation_stats is not None:
             best_vloss = validation_stats["loss_total"]   
-            best_metric = validation_stats[cfg.monitor_metric]
+            best_metric = validation_stats[cfg.metric_to_track]
 
         logger.info("Resumed training from %s (starting epoch=%d)", cfg.resume, start_epoch)
 
@@ -274,7 +275,7 @@ def fit(
         
         train_stats = train_epoch(
             model=model,
-            loader=get_tqdm_bar(train_loader, epoch, end_epoch, "Train", cfg.progress),
+            loader=get_tqdm_bar(train_loader, epoch + 1, end_epoch, "Train", cfg.progress),
             loss_fn=loss_fn,
             optimiser=optimiser,
             scaler=grad_scaler,
@@ -285,7 +286,7 @@ def fit(
 
         val_stats = validate_epoch(
             model=model,
-            loader=get_tqdm_bar(val_loader, epoch, end_epoch, "Val", cfg.progress),
+            loader=get_tqdm_bar(val_loader, epoch + 1, end_epoch, "Val", cfg.progress),
             loss_fn=loss_fn,
             metrics=val_metrics,
             device=device,
@@ -316,22 +317,25 @@ def fit(
         
         model_name = getattr(model, 'name', model.__class__.__name__)
         save_ckpt(checkpoint, str(ckpt_dir / "model_current.pth"))
-        metric_value = val_stats.get(cfg.monitor_metric, None)
+        
+        current = float(val_stats.get(cfg.metric_to_track, 0.0))
+        is_best = current > best_metric
 
-        if metric_value is not None and metric_value > best_metric:
+        if is_best:
             best_epoch = epoch
-            best_metric = metric_value
+            best_metric = current
             save_ckpt(checkpoint, str(ckpt_dir / f"model_best.pth"))
         
 
         logger.info(
-            "Epoch %d/%d: Avg Train Loss: %.4f, Avg Val Loss: %.4f, Mean IoU: %.4f, Training time: %s, Validation time: %s",
+            "[epoch %d/%d]: train_loss=%.4f, val_loss=%.4f, %s=%.4f, mean_dice=%s, train_time=%s, val_time=%s%s",
             epoch+1, cfg.epochs,
             train_stats["loss_total"],
-            val_stats["loss_total"],
-            val_stats.get(cfg.monitor_metric, 0.0),
+            val_stats.get("mean_iou", -1.0),
+            val_stats.get("mean_dice", -1.0),
             str(datetime.timedelta(seconds=int(train_stats["elapsed_time"]))),
-            str(datetime.timedelta(seconds=int(val_stats["elapsed_time"])))
+            str(datetime.timedelta(seconds=int(val_stats["elapsed_time"]))),
+            " (BEST)" if is_best else "",
         )
 
 
@@ -355,7 +359,6 @@ def fit(
 
         if device.type == "cuda": torch.cuda.empty_cache()  # clear cache
 
-    return str(ckpt_dir / f"{model_name}-{cfg.epochs}_best.pth")
 
 def run(cfg: SemanticTrainConfig) -> str:
     """
@@ -371,7 +374,7 @@ def run(cfg: SemanticTrainConfig) -> str:
     cfg.output = os.path.join(cfg.output, f"{timestamp}-train-{model.name}")
     cfg.progress = resolve_progress_flag(cfg.progress)
 
-    train_loader, val_loader, spec, split = build_dataloaders(
+    train_loader, val_loader, spec = build_dataloaders(
         dataset_id=cfg.dataset,
         registry_path="data/datasets.yaml",
         batch_size=cfg.batch_size,

@@ -63,6 +63,7 @@ def setup_model(model_name, encoder, dataset, num_classes, device):
     return model.to(device)
 
 def freeze_encoder(model):
+    # smp calls the backbone an encoder for some reason
     if hasattr(model, "encoder"):
         for p in model.encoder.parameters():
             p.requires_grad = False
@@ -397,6 +398,7 @@ def fit(
                 model=model,
                 optimiser=optimiser,
                 scheduler=scheduler,
+                segm="semantic",
                 train_stats=train_stats["loss_total"],
                 val_stats=val_stats["loss_total"],
                 epoch=epoch,

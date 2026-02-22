@@ -8,7 +8,7 @@ import cv2
 import numpy as np
 import yaml
 
-from leaf_seg.dataset.templates import InstanceDatasetSpec, SemanticDatasetSpec, SplitSpec
+from leaf_seg.dataset.templates import InstanceDatasetSpec, SemanticDatasetSpec
 
 
 
@@ -90,7 +90,7 @@ def load_registry(registry_path: str | Path) -> dict:
     return reg
 
 
-def get_dataset_spec(dataset_id: str, registry_path: str | Path) -> SemanticDatasetSpec:
+def get_dataset_spec(dataset_id: str, registry_path: str | Path) -> SemanticDatasetSpec | InstanceDatasetSpec:
     reg = load_registry(registry_path)
 
     if dataset_id not in reg:
@@ -109,60 +109,76 @@ def get_dataset_spec(dataset_id: str, registry_path: str | Path) -> SemanticData
     if task not in ("semantic", "instance"):
         raise ValueError(f"Dataset '{dataset_id}' has invalid task '{task}'")
     
+    train_set = cfg.get("train_set")
+    if train_set is None:
+        raise ValueError(f"Dataset '{dataset_id}' missing required key: train_set")
+    
+    val_set = cfg.get("val_set")
+    if val_set is None:
+        raise ValueError(f"Dataset '{dataset_id}' missing required key: val_set")
+    
+    values = {
+        "name":dataset_id,
+        "root":Path(root),
+        "task":task,
+        "train_set":Path(train_set),
+        "val_set":Path(val_set),
+    }
+    
     if task == "semantic":
         return SemanticDatasetSpec(
-            name=dataset_id,
-            root=Path(root),
-            task=task,
+            **values,
             image_dir=cfg.get("image_dir", "gt"),
             mask_dir=cfg.get("mask_dir", "masks"),
             ext=cfg.get("ext", "png"),
         )
 
     else:  # instance
+        ann = cfg.get("ann", None)
+        if ann is not None: ann = Path(ann)
         return InstanceDatasetSpec(
-            name=dataset_id,
-            root=Path(root),
+            **values,
             image_dir=cfg.get("image_dir", "gt"),
-            ann=Path(cfg.get("ann", "coco.json")),
+            ann=ann,
             remap=cfg.get("remap", True),
             filter_empty=cfg.get("filter_empty", True),
         )
 
-def get_split_spec(dataset_id: str, registry_path: str | Path) -> SplitSpec:
-    reg = load_registry(registry_path)
-    ds_cfg = reg.get(dataset_id)
-    if not isinstance(ds_cfg, dict):
-        raise KeyError(f"Unknown dataset id '{dataset_id}'.")
 
-    split_cfg = ds_cfg.get("split")
+# def get_split_spec(dataset_id: str, registry_path: str | Path) -> SplitSpec:
+#     reg = load_registry(registry_path)
+#     ds_cfg = reg.get(dataset_id)
+#     if not isinstance(ds_cfg, dict):
+#         raise KeyError(f"Unknown dataset id '{dataset_id}'.")
 
-    # default split if absent
-    if split_cfg is None:
-        return SplitSpec(kind="ratio", train_ratio=0.8, val_ratio=0.2, seed=42)
+#     split_cfg = ds_cfg.get("split")
 
-    if not isinstance(split_cfg, dict):
-        raise ValueError(f"split for '{dataset_id}' must be a dict")
+#     # default split if absent
+#     if split_cfg is None:
+#         return SplitSpec(kind="ratio", train_ratio=0.8, val_ratio=0.2, seed=42)
 
-    kind = split_cfg.get("kind", "ratio")
-    if kind not in ("ratio", "files", "none"):
-        raise ValueError(f"Invalid split kind '{kind}' for '{dataset_id}'")
+#     if not isinstance(split_cfg, dict):
+#         raise ValueError(f"split for '{dataset_id}' must be a dict")
 
-    if kind == "none":
-        return SplitSpec(kind="none")
+#     kind = split_cfg.get("kind", "ratio")
+#     if kind not in ("ratio", "files", "none"):
+#         raise ValueError(f"Invalid split kind '{kind}' for '{dataset_id}'")
 
-    seed = int(split_cfg.get("seed", 42))
+#     if kind == "none":
+#         return SplitSpec(kind="none")
 
-    if kind == "ratio":
-        tr = float(split_cfg.get("train_ratio", 0.8))
-        vr = float(split_cfg.get("val_ratio", 0.2))
-        if abs((tr + vr) - 1.0) > 1e-6:
-            raise ValueError(f"train_ratio + val_ratio must equal 1.0 (got {tr}+{vr})")
-        return SplitSpec(kind="ratio", seed=seed, train_ratio=tr, val_ratio=vr)
+#     seed = int(split_cfg.get("seed", 42))
 
-    if kind == "files":
-        train_files = _resolve_path(ds_cfg.get("root"),split_cfg.get("train_files"))
-        val_files = _resolve_path(ds_cfg.get("root"),split_cfg.get("val_files"))
-        if train_files is None or val_files is None:
-            raise ValueError("files split requires train_files and val_files")
-        return SplitSpec(kind="files", seed=seed, train_files=train_files, val_files=val_files)
+#     if kind == "ratio":
+#         tr = float(split_cfg.get("train_ratio", 0.8))
+#         vr = float(split_cfg.get("val_ratio", 0.2))
+#         if abs((tr + vr) - 1.0) > 1e-6:
+#             raise ValueError(f"train_ratio + val_ratio must equal 1.0 (got {tr}+{vr})")
+#         return SplitSpec(kind="ratio", seed=seed, train_ratio=tr, val_ratio=vr)
+
+#     if kind == "files":
+#         train_files = _resolve_path(ds_cfg.get("root"),split_cfg.get("train_files"))
+#         val_files = _resolve_path(ds_cfg.get("root"),split_cfg.get("val_files"))
+#         if train_files is None or val_files is None:
+#             raise ValueError("files split requires train_files and val_files")
+#         return SplitSpec(kind="files", seed=seed, train_files=train_files, val_files=val_files)

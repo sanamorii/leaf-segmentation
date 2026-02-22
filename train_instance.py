@@ -348,7 +348,7 @@ def fit(
     scheduler: Optional[torch.optim.lr_scheduler._LRScheduler] = None,
     use_amp: bool = True,
     clip_grad_norm: Optional[float] = 1.0,
-    out_dir: str = "results/maskrcnn",
+    out_dir: str = "checkpoints/maskrcnn",
     save_every: int = 1,
     metric_to_track: str = "segm_AP",
     higher_is_better: bool = True,
@@ -440,7 +440,7 @@ def fit(
 def build_reporter(report_name: str, report_dir: str, report_every: int, **metadata):
     timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     run_name = report_name or f"{metadata['model']}-{timestamp}"
-    report_path = Path(report_dir) / run_name
+    report_path = Path(report_dir)
     resume_path = metadata.get("resume")
     reporter = InstanceTrainingReporter(
         output_dir=report_path,
