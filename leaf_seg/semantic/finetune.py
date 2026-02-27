@@ -185,8 +185,7 @@ def run(cfg: SemanticFinetuneConfig):
 
     reporter = None
     if not cfg.no_report:
-        reporter = build_reporter(cfg=cfg, model_name = model.name)
-
+        reporter = build_reporter(cfg=cfg, )
 
     # load pretrained weights (strict or shape-matched)
     load_pretrained_weights(model, cfg.ckpt, device=cfg.device, strict_load=cfg.strict_load)

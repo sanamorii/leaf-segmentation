@@ -99,6 +99,7 @@ def scan_pairs(root: Path, image_dir: str, mask_dir: str, ext: str) -> list[tupl
 def load_split_file_pairs(root: Path, image_dir: str, mask_dir: str, filelist: Path) -> list[tuple[str, str]]:
     img_dir = root / image_dir
     msk_dir = root / mask_dir
+    filelist = root / filelist
     names = [ln.strip() for ln in filelist.read_text(encoding="utf-8").splitlines() if ln.strip()]
     return [(str(img_dir / n), str(msk_dir / n)) for n in names]
 
@@ -139,6 +140,7 @@ def build_dataset(
     image_size: tuple[int, int] = (512, 512),
     mean: Tuple[float, float, float] = (0.485, 0.456, 0.406),
     std: Tuple[float, float, float] = (0.229, 0.224, 0.225),
+    allow_transforms: bool = True,
 ) -> tuple[DataLoader, Optional[DataLoader], SemanticDatasetSpec]:
     spec = get_dataset_spec(dataset_id, registry_path)
     # split = get_split_spec(dataset_id, registry_path)
@@ -146,10 +148,14 @@ def build_dataset(
     if spec.task != "semantic": # TODO: implement instance dataloading
         raise NotImplementedError("instance not available")
     
-    if train_transforms is None:
-        train_transforms = TRAIN_TFMS(image_size, mean, std)
-    if val_transforms is None:
-        val_transforms = VAL_TFMS(image_size, mean, std)
+    if allow_transforms == True:
+        if train_transforms is None:
+            train_transforms = TRAIN_TFMS(image_size, mean, std)
+        if val_transforms is None:
+            val_transforms = VAL_TFMS(image_size, mean, std)
+    else:
+        train_transforms = None
+        val_transforms = None
     
     if not spec.train_set or not spec.val_set:
         raise ValueError("leafseg requires train_files and val_files requires")

@@ -1,4 +1,5 @@
 from torchvision.models.detection import (
+    maskrcnn_resnet50_fpn_v2,
     maskrcnn_resnet50_fpn,
     MaskRCNN_ResNet50_FPN_Weights,
 )
@@ -10,6 +11,7 @@ def get_model(num_classes):
     model = maskrcnn_resnet50_fpn(
         weights=MaskRCNN_ResNet50_FPN_Weights.DEFAULT
     )
+
     # Get number of input features for the classifier
     in_features = model.roi_heads.box_predictor.cls_score.in_features
     # Replace box predictor with new one (num_classes includes background)

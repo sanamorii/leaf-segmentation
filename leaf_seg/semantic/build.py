@@ -1,11 +1,13 @@
 import datetime
 from pathlib import Path
+from dataclasses import asdict
 
 import torch.nn as nn
 
 from leaf_seg.reporter.semantic import SemanticTrainingReporter
 from leaf_seg.common.config import SemanticTrainConfig
 from leaf_seg.models.modelling import get_smp_model as get_model
+
 
 
 def setup_model(cfg: SemanticTrainConfig) -> nn.Module:
@@ -30,23 +32,8 @@ def build_reporter(cfg: SemanticTrainConfig) -> SemanticTrainingReporter:
         append=bool(cfg.resume),
     )
 
-    meta = {
-        "model": cfg.model,
-        "encoder": cfg.encoder,
-        "dataset": cfg.dataset,
-        "num_classes": cfg.num_classes,
-        "batch_size": cfg.batch_size,
-        "num_workers": cfg.num_workers,
-        "lr": cfg.lr,
-        "epochs": cfg.epochs,
-        "device": str(cfg.device),
-        "resume": cfg.resume,
-        "use_amp": bool(cfg.use_amp),
-        "gradient_clipping": cfg.gradient_clipping,
-        "montior_metric": cfg.metric_to_track,
-        
-        # TODO: patience and weights
-    }
+    meta = asdict(cfg)
+    meta.update({"started_on": timestamp})
 
     reporter.write_metadata(meta)
     return reporter

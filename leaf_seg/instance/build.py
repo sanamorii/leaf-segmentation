@@ -1,5 +1,6 @@
 import datetime
 from pathlib import Path
+from dataclasses import asdict
 
 import torch
 
@@ -10,12 +11,12 @@ from leaf_seg.reporter.instance import InstanceTrainingReporter
 
 def setup_maskrcnn(num_classes: int, dataset: str, device: str) -> torch.nn.Module:
     model = get_maskrcnn(num_classes=num_classes)
-    model.name = f"maskrcnn-{dataset}-instance"
+    model.name = f"maskrcnn-{dataset}"
     return model.to(torch.device(device))
 
 
 def build_reporter(cfg: InstanceTrainConfig):
-
+    timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     report_path = Path(cfg.output)
     reporter = InstanceTrainingReporter(
         output_dir=report_path,
@@ -24,20 +25,8 @@ def build_reporter(cfg: InstanceTrainConfig):
         append=bool(cfg.resume),
     )
 
-    meta = {
-        "model": cfg.model,
-        "encoder": cfg.encoder,
-        "dataset": cfg.dataset,
-        "num_classes": cfg.num_classes,
-        "batch_size": cfg.batch_size,
-        "num_workers": cfg.num_workers,
-        "lr": cfg.lr,
-        "epochs": cfg.epochs,
-        "device": str(cfg.device),
-        "resume": cfg.resume,
-        "use_amp": bool(cfg.use_amp),
-        "gradient_clipping": cfg.gradient_clipping,
-        "montior_metric": cfg.metric_to_track,
-    }
+    meta = asdict(cfg)
+    meta.update({"started_on": timestamp})
+
     reporter.write_metadata(meta)
     return reporter

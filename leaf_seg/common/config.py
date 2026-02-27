@@ -20,6 +20,8 @@ class BaseConfig:
 class InstanceTrainConfig(BaseConfig):
     model: str | None = None
     encoder: str | None = None
+    score_threshold : float = 0.0
+    max_dets_per_image: int = 100
 
     lr: float = 1e-3
     epochs: int = 100
@@ -29,12 +31,24 @@ class InstanceTrainConfig(BaseConfig):
     resume: str | None = None
     use_amp: bool = False
 
-    output: str = "checkpoints/semantic/train"
+    output: str = "checkpoints/instance/train"
 
     metric_to_track: str | None = "segm_AP"
     no_report: bool = False
     report_every: int = 1
     progress: bool | None = None  #TODO: rename to verbosity
+
+@dataclass(kw_only=True)
+class InstanceFinetuneConfig(InstanceTrainConfig):
+    output: str = "checkpoints/instance/finetune"
+
+    ckpt: str
+    backbone_lr : float | None = None
+    head_lr : float | None = None
+    weight_decay: float = 1e-4
+    freeze_backbone : bool = True
+    freeze_epochs : int = 0
+    strict_load: bool = True
 
 @dataclass(kw_only=True)
 class SemanticTrainConfig(BaseConfig):

@@ -328,11 +328,12 @@ def fit(
         
 
         logger.info(
-            "[epoch %d/%d]: train_loss=%.4f, val_loss=%.4f, %s=%.4f, mean_dice=%s, train_time=%s, val_time=%s%s",
+            "[epoch %d/%d]: train_loss=%.4f, val_loss=%.4f, mean_iou=%.4f, mean_dice=%.4f, train_time=%s, val_time=%s%s",
             epoch+1, cfg.epochs,
-            train_stats["loss_total"],
-            val_stats.get("mean_iou", -1.0),
-            val_stats.get("mean_dice", -1.0),
+            float(train_stats["loss_total"]),
+            float(val_stats.get("loss_total", -1.0)),
+            float(val_stats.get("mean_iou", -1.0)),
+            float(val_stats.get("mean_dice", -1.0)),
             str(datetime.timedelta(seconds=int(train_stats["elapsed_time"]))),
             str(datetime.timedelta(seconds=int(val_stats["elapsed_time"]))),
             " (BEST)" if is_best else "",

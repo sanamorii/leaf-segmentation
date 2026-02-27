@@ -23,8 +23,8 @@ def TRAIN_TFMS(image_size: tuple[int, int] = None,) -> A.Compose:
         tfms.append(A.Resize(h, w))
 
     tfms += [
-        A.HorizontalFlip(p=0.5),
-        A.RandomBrightnessContrast(p=0.2),
+        # A.HorizontalFlip(p=0.5),
+        # A.RandomBrightnessContrast(p=0.2),
         ToTensorV2(),
     ]
 
@@ -242,6 +242,7 @@ class LeafCoco(Dataset):
             t_masks = transformed.get("masks", [])
             t_bboxes = transformed.get("bboxes", [])
             t_labels = transformed.get("labels", [])
+            assert len(t_masks) == len(t_bboxes) == len(t_labels)
 
             out_h, out_w = int(img_t.shape[-2]), int(img_t.shape[-1])
 
@@ -270,16 +271,15 @@ class LeafCoco(Dataset):
                 if mask_arr.sum() == 0:
                     continue
 
-                box_from_mask = self._mask_to_box(mask_arr)
-                if box_from_mask is None:
-                    continue
+                # box_from_mask = self._mask_to_box(mask_arr)
+                # if box_from_mask is None:
+                #     continue
 
                 new_masks.append(torch.from_numpy(mask_arr).to(torch.uint8))
-                new_boxes.append(box_from_mask)
+                new_boxes.append(box)
                 new_labels.append(int(lab))
                 new_areas.append(float(mask_arr.sum()))
-                #new_iscrowd.append(int(iscrowd[i]))
-                new_iscrowd.append(0)  # don't care
+                new_iscrowd.append(int(iscrowd[i]))
 
             if len(new_boxes) == 0:
                 boxes_t = torch.zeros((0, 4), dtype=torch.float32)
@@ -345,9 +345,9 @@ def build_dataset(
     #     vision/torchvision/models/detection/faster_rcnn.py:281. do not transform here
 
     if train_transforms is None:
-        train_transforms = TRAIN_TFMS(image_size=image_size)
+        train_transforms = TRAIN_TFMS(image_size=None)
     if val_transforms is None:
-        val_transforms = VAL_TFMS(image_size=image_size)
+        val_transforms = VAL_TFMS(image_size=None)
 
     if not spec.train_set or not spec.val_set:
         raise ValueError("leafseg requires train_files and val_files requires")
