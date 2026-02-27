@@ -344,7 +344,7 @@ def evaluate_dataset(
 
     ds = LeafCoco(
         image_dir=str(base / "gt"),
-        annotation_file=str(base / "coco.json"),
+        ann_file=str(base / "coco.json"),
         transforms=None,
         remap=True,
         filter_empty=True,
