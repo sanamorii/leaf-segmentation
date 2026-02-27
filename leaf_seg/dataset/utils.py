@@ -70,6 +70,10 @@ def get_dataset_spec(dataset_id: str, registry_path: str | Path) -> SemanticData
     root = cfg.get("root")
     if root is None:
         raise ValueError(f"Dataset '{dataset_id}' missing required key: root")
+    
+    num_classes = cfg.get("num_classes")
+    if num_classes is None:
+        raise ValueError(f"Dataset '{dataset_id}' missing required key: root")
 
     task = cfg.get("task")
     if task not in ("semantic", "instance"):
@@ -87,6 +91,7 @@ def get_dataset_spec(dataset_id: str, registry_path: str | Path) -> SemanticData
         "name":dataset_id,
         "root":Path(root),
         "task":task,
+        "num_classes": int(num_classes),
         "train_set":Path(train_set),
         "val_set":Path(val_set),
     }

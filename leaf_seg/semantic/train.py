@@ -366,7 +366,16 @@ def run(cfg: SemanticTrainConfig) -> str:
     run semantic cv training: returns path to the best model
     """
 
-    model = setup_model(cfg)
+    train_loader, val_loader, spec = build_dataloaders(
+        dataset_id=cfg.dataset,
+        registry_path="data/datasets.yaml",
+        batch_size=cfg.batch_size,
+        num_workers=cfg.num_workers,
+    )
+    
+    cfg.num_classes = spec.num_classes
+    model = setup_model(cfg, spec)
+    
     optimiser = build_optimiser(model, cfg.lr)
     scheduler = build_scheduler(optimiser)
     loss_fn = CEDiceLoss(ce_weight=0.5, dice_weight=0.5)
@@ -374,13 +383,6 @@ def run(cfg: SemanticTrainConfig) -> str:
     timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
     cfg.output = os.path.join(cfg.output, f"{timestamp}-train-{model.name}")
     cfg.progress = resolve_progress_flag(cfg.progress)
-
-    train_loader, val_loader, spec = build_dataloaders(
-        dataset_id=cfg.dataset,
-        registry_path="data/datasets.yaml",
-        batch_size=cfg.batch_size,
-        num_workers=cfg.num_workers,
-    )
 
     reporter = None
     if not cfg.no_report:

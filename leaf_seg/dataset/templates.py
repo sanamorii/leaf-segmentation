@@ -9,6 +9,7 @@ class DatasetSpec:
     name: str
     root: Path
     task: Literal["semantic", "instance"]
+    num_classes: int
     train_set: Path
     val_set: Path
     ext: str = "png"

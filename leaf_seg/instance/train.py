@@ -425,7 +425,15 @@ def run(cfg: InstanceTrainConfig) -> str:
     run semantic cv training: returns path to the best model
     """
 
-    model = setup_maskrcnn(num_classes=cfg.num_classes, dataset=cfg.dataset, device=cfg.device)
+    train_loader, val_loader, spec = build_dataloaders(
+        dataset_id=cfg.dataset,
+        registry_path="data/datasets.yaml",
+        batch_size=cfg.batch_size,
+        num_workers=cfg.num_workers,
+    )
+
+    cfg.num_classes = spec.num_classes
+    model = setup_maskrcnn(num_classes=spec.num_classes, dataset=cfg.dataset, device=cfg.device)
 
     params = [p for p in model.parameters() if p.requires_grad]
     optimiser = torch.optim.AdamW(params, lr=cfg.lr, weight_decay=1e-4)
@@ -438,13 +446,6 @@ def run(cfg: InstanceTrainConfig) -> str:
     timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
     cfg.output = os.path.join(cfg.output, f"{timestamp}-train-{model.name}")
     cfg.progress = resolve_progress_flag(cfg.progress)
-
-    train_loader, val_loader, spec = build_dataloaders(
-        dataset_id=cfg.dataset,
-        registry_path="data/datasets.yaml",
-        batch_size=cfg.batch_size,
-        num_workers=cfg.num_workers,
-    )
 
     reporter = None
     if not cfg.no_report:

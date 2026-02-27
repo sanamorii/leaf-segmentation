@@ -6,16 +6,18 @@ import torch.nn as nn
 
 from leaf_seg.reporter.semantic import SemanticTrainingReporter
 from leaf_seg.common.config import SemanticTrainConfig
+from leaf_seg.dataset.templates import SemanticDatasetSpec
 from leaf_seg.models.modelling import get_smp_model as get_model
 
 
 
-def setup_model(cfg: SemanticTrainConfig) -> nn.Module:
+def setup_model(cfg: SemanticTrainConfig, spec: SemanticDatasetSpec) -> nn.Module:
+
     model = get_model(
         name=cfg.model,
         encoder=cfg.encoder,
         weights="imagenet", # NOTE: default to imagenet since training from scratch may be long; reconsider later
-        classes=cfg.num_classes,
+        classes=spec.num_classes,
     )
 
     model.name = f"{model.__class__.__name__.lower()}_{cfg.encoder}_{cfg.dataset}"
