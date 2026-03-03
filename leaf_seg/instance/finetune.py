@@ -23,7 +23,7 @@ from pycocotools.cocoeval import COCOeval
 from pycocotools import mask as mask_utils
 
 from leaf_seg.common.config import InstanceFinetuneConfig
-from leaf_seg.dataset.plantdreamer_instance import build_dataloaders
+from leaf_seg.dataset.build import build_dataloaders
 from leaf_seg.instance.build import build_reporter, setup_maskrcnn
 from leaf_seg.models.maskrcnn_torch import get_model as get_maskrcnn
 from leaf_seg.models.utils import create_maskrcnn_ckpt, save_ckpt, load_ckpt

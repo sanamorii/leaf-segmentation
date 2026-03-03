@@ -11,7 +11,7 @@ from albumentations.pytorch import ToTensorV2
 from PIL import Image
 
 from leaf_seg.dataset.templates import InstanceDatasetSpec
-from leaf_seg.dataset.utils import get_dataset_spec
+# from leaf_seg.dataset.build import get_dataset_spec
 
 logger = logging.getLogger(__name__)
 
@@ -329,18 +329,12 @@ def coco_collate_fn(batch):
 
 
 def build_dataset(
-    dataset_id: str,
-    registry_path: str | Path,
+    spec: InstanceDatasetSpec,
     *,
     train_transforms: Optional[A.Compose] = None,
     val_transforms: Optional[A.Compose] = None,
     image_size: tuple[int, int] = (512, 512),
-    mean: Tuple[float, float, float] = (0.485, 0.456, 0.406),  # kept for API compatibility
-    std: Tuple[float, float, float] = (0.229, 0.224, 0.225),   # kept for API compatibility
-):
-    spec = get_dataset_spec(dataset_id, registry_path)
-    
-
+) -> tuple[LeafCoco, LeafCoco]:
     # NOTE: for some stupid reason pytorch's maskrcnn already performs transforms (normalisation, resizing)
     #     vision/torchvision/models/detection/faster_rcnn.py:281. do not transform here
 
@@ -368,51 +362,5 @@ def build_dataset(
         transforms=val_transforms,
     )
 
-    return train_ds, val_ds, spec
+    return train_ds, val_ds
 
-def build_dataloaders(
-    dataset_id: str,
-    registry_path: str | Path,
-    *,
-    batch_size: int,
-    num_workers: int,
-    pin_memory: bool = True,
-    train_transforms: Optional[A.Compose] = None,
-    val_transforms: Optional[A.Compose] = None,
-    image_size: tuple[int, int] = (512, 512),
-    mean: Tuple[float, float, float] = (0.485, 0.456, 0.406),
-    std: Tuple[float, float, float] = (0.229, 0.224, 0.225),
-    shuffle: bool = True,
-    drop_last: bool = True,
-) -> tuple[DataLoader, DataLoader, InstanceDatasetSpec]:
-
-    train_ds, val_ds, spec = build_dataset(
-        dataset_id=dataset_id,
-        registry_path=registry_path,
-        train_transforms=train_transforms,
-        val_transforms=val_transforms,
-        image_size=image_size,
-        mean=mean, std=std,
-    )
-
-    train_loader = DataLoader(
-        train_ds,
-        batch_size=batch_size,
-        num_workers=num_workers,
-        pin_memory=pin_memory,
-        shuffle=shuffle,
-        drop_last=drop_last,
-        collate_fn=coco_collate_fn,
-    )
-
-    val_loader = DataLoader(
-        val_ds,
-        batch_size=batch_size,
-        num_workers=num_workers,
-        pin_memory=pin_memory,
-        shuffle=False,
-        drop_last=False,
-        collate_fn=coco_collate_fn,
-    )
-
-    return train_loader, val_loader, spec

@@ -27,7 +27,7 @@ from segmentation_models_pytorch.base.model import SegmentationModel
 
 from leaf_seg.common.build import build_optimiser, build_scheduler
 from leaf_seg.dataset.utils import rgb_to_class
-from leaf_seg.dataset.plantdreamer_semantic import build_dataloaders
+from leaf_seg.dataset.build import build_dataloaders
 from leaf_seg.common.loss.cedice import CEDiceLoss
 from leaf_seg.common.loss.earlystop import EarlyStopping
 from leaf_seg.common.verbose import get_tqdm_bar, resolve_progress_flag
@@ -361,14 +361,14 @@ def fit(
         if device.type == "cuda": torch.cuda.empty_cache()  # clear cache
 
 
-def run(cfg: SemanticTrainConfig) -> str:
+def run(cfg: SemanticTrainConfig, registry_path: str = "data/datasets.yaml") -> str:
     """
     run semantic cv training: returns path to the best model
     """
 
     train_loader, val_loader, spec = build_dataloaders(
         dataset_id=cfg.dataset,
-        registry_path="data/datasets.yaml",
+        registry_path=registry_path,
         batch_size=cfg.batch_size,
         num_workers=cfg.num_workers,
     )

@@ -88,6 +88,18 @@ class SemanticEvalConfig(BaseConfig):
     resize: tuple[int,int] = (512,512)
 
 @dataclass(kw_only=True)
+class InstanceEvalConfig(BaseConfig):
+    model: str | None = None
+    encoder: str | None = None
+    checkpoint: str
+    num_classes: int
+    output: str = "results/instance"
+    device: str = get_default_device()
+    resize: tuple[int, int] | None = None
+    score_thresh: float = 0.5
+    iou_thresh: float = 0.5
+
+@dataclass(kw_only=True)
 class SemanticInferConfig(BaseConfig):
     image: str | None = None
     images: str | None = None

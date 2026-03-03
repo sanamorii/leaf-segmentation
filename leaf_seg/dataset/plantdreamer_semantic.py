@@ -10,8 +10,6 @@ from pathlib import Path
 from PIL import Image
 
 from leaf_seg.dataset.templates import SemanticDatasetSpec
-from leaf_seg.dataset.utils import get_dataset_spec
-
 
 logger = logging.getLogger(__name__)
 
@@ -103,37 +101,9 @@ def load_split_file_pairs(root: Path, image_dir: str, mask_dir: str, filelist: P
     names = [ln.strip() for ln in filelist.read_text(encoding="utf-8").splitlines() if ln.strip()]
     return [(str(img_dir / n), str(msk_dir / n)) for n in names]
 
-# def resolve_pairs(spec: SemanticDatasetSpec, split: SplitSpec, shuffle: bool = True) -> tuple[list[tuple[str,str]], list[tuple[str,str]] | None]:
-#     all_pairs = scan_pairs(spec.root, spec.image_dir, spec.mask_dir, spec.ext)
-
-#     if split.kind ==  "none":
-#         return all_pairs, None
-    
-#     if split.kind ==  "files":
-#         if not split.train_files or not split.val_files:
-#             raise ValueError("file split requires train_files and val_files")
-#         train_pairs = load_split_file_pairs(spec.root, spec.image_dir, spec.mask_dir, split.train_files)
-#         val_pairs = load_split_file_pairs(spec.root, spec.image_dir, spec.mask_dir, split.val_files)
-#         return train_pairs, val_pairs
-
-#     if split.kind == "ratio":
-#         if not (0.0 < split.train_ratio < 1.0) or not (0.0 < split.val_ratio < 1.0):
-#             raise ValueError("ratios must be in (0,1)")
-        
-#         if abs((split.train_ratio + split.val_ratio) - 1.0) > 1e-6:
-#             raise ValueError("train_ratio + val_ratio must equal 1.0")
-        
-#         train_pairs, val_pairs = train_test_split(
-#             all_pairs, test_size=split.val_ratio, random_state=split.seed, shuffle=shuffle
-#         )
-#         return train_pairs, val_pairs
-    
-#     raise ValueError(f"Unknown split kind: {split.kind}")
-
 
 def build_dataset(
-    dataset_id: str,
-    registry_path: str | Path,
+    spec: SemanticDatasetSpec,
     *,
     train_transforms: Optional[A.Compose] = None,
     val_transforms: Optional[A.Compose] = None,
@@ -141,12 +111,7 @@ def build_dataset(
     mean: Tuple[float, float, float] = (0.485, 0.456, 0.406),
     std: Tuple[float, float, float] = (0.229, 0.224, 0.225),
     allow_transforms: bool = True,
-) -> tuple[DataLoader, Optional[DataLoader], SemanticDatasetSpec]:
-    spec = get_dataset_spec(dataset_id, registry_path)
-    # split = get_split_spec(dataset_id, registry_path)
-
-    if spec.task != "semantic": # TODO: implement instance dataloading
-        raise NotImplementedError("instance not available")
+) -> tuple[DataLoader, Optional[DataLoader]]:
     
     if allow_transforms == True:
         if train_transforms is None:
@@ -168,86 +133,34 @@ def build_dataset(
     val_img, val_msk = zip(*val_pairs)
     val_ds = PlantDreamerData(val_img, val_msk, transforms=val_transforms)
 
-    logger.info("Dataset=%s root=%s task=%s", spec.name, spec.root, spec.task)
-    logger.info("Images=%d train=%d val=%s", (len(train_ds)+len(val_ds)), len(train_ds), len(val_ds))
-
-    return train_ds, val_ds, spec
-
-
-
-def build_dataloaders(
-    dataset_id: str,
-    registry_path: str | Path,
-    *,
-    batch_size: int,
-    num_workers: int,
-    pin_memory: bool = True,
-    train_transforms: Optional[A.Compose] = None,
-    val_transforms: Optional[A.Compose] = None,
-    image_size: tuple[int, int] = (512, 512),
-    mean: Tuple[float, float, float] = (0.485, 0.456, 0.406),
-    std: Tuple[float, float, float] = (0.229, 0.224, 0.225),
-    shuffle: bool = True,
-    drop_last: bool = True,
-) -> tuple[DataLoader, DataLoader, SemanticDatasetSpec]:
-
-    train_ds, val_ds, spec = build_dataset(
-        dataset_id=dataset_id,
-        registry_path=registry_path,
-        train_transforms=train_transforms,
-        val_transforms=val_transforms,
-        image_size=image_size,
-        mean=mean, std=std,
-        shuffle=shuffle,
-    )
-
-    train_loader = DataLoader(
-        train_ds,
-        batch_size=batch_size,
-        num_workers=num_workers,
-        pin_memory=pin_memory,
-        shuffle=shuffle,
-        drop_last=drop_last,
-    )
-
-
-    val_loader = DataLoader(
-        val_ds,
-        batch_size=batch_size,
-        num_workers=num_workers,
-        pin_memory=pin_memory,
-        shuffle=False,
-        drop_last=False,
-    )
-
-    return train_loader, val_loader, spec
+    return train_ds, val_ds
 
 
 # basic smoke test
-if __name__ == "__main__":
-    import argparse
+# if __name__ == "__main__":
+#     import argparse
 
-    logging.basicConfig(level=logging.INFO)
+#     logging.basicConfig(level=logging.INFO)
 
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--registry", type=str, default="datasets.yaml")
-    ap.add_argument("--dataset", type=str, required=True)
-    ap.add_argument("--batch_size", type=int, default=8)
-    ap.add_argument("--num_workers", type=int, default=4)
-    ap.add_argument("--pin_memory", action="store_true")
-    args = ap.parse_args()
+#     ap = argparse.ArgumentParser()
+#     ap.add_argument("--registry", type=str, default="datasets.yaml")
+#     ap.add_argument("--dataset", type=str, required=True)
+#     ap.add_argument("--batch_size", type=int, default=8)
+#     ap.add_argument("--num_workers", type=int, default=4)
+#     ap.add_argument("--pin_memory", action="store_true")
+#     args = ap.parse_args()
 
-    train_loader, val_loader, spec, split = build_dataloaders(
-        dataset_id=args.dataset,
-        registry_path=args.registry,
-        batch_size=args.batch_size,
-        num_workers=args.num_workers,
-        pin_memory=args.pin_memory,
-    )
+#     train_loader, val_loader, spec, split = build_dataloaders(
+#         dataset_id=args.dataset,
+#         registry_path=args.registry,
+#         batch_size=args.batch_size,
+#         num_workers=args.num_workers,
+#         pin_memory=args.pin_memory,
+#     )
 
-    # iterate one batch to validate
-    x, y = next(iter(train_loader))
-    print("Train batch:", x.shape, y.shape)
-    if val_loader is not None:
-        x, y = next(iter(val_loader))
-        print("Val batch:", x.shape, y.shape)
+#     # iterate one batch to validate
+#     x, y = next(iter(train_loader))
+#     print("Train batch:", x.shape, y.shape)
+#     if val_loader is not None:
+#         x, y = next(iter(val_loader))
+#         print("Val batch:", x.shape, y.shape)
