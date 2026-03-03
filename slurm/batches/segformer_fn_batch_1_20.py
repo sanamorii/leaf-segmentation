@@ -8,6 +8,7 @@ from torch.utils.data import Subset, DataLoader
 
 from leaf_seg.common.build import build_optimiser, build_scheduler
 from leaf_seg.common.loss.cedice import CEDiceLoss
+from leaf_seg.dataset.build import get_dataset_spec
 from leaf_seg.dataset.plantdreamer_semantic import build_dataloaders, build_dataset
 from leaf_seg.semantic.build import build_reporter, setup_model
 from leaf_seg.semantic.train import fit, run
@@ -32,17 +33,17 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(mes
 logger = logging.getLogger(__name__)
 
 DATASET = "bean_semantic_real"
-trn_ds, val_ds, spec = build_dataset(
+spec = get_dataset_spec(
     dataset_id=DATASET,
-    registry_path="data/datasets.yaml",
-)
+    registry_path="data/datasets.yaml",)
+trn_ds, val_ds = build_dataset(spec)
 
 
 run_start = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
 t0 = time.perf_counter()
 wall_start = datetime.datetime.now(datetime.timezone.utc)
 
-for x in range(1, 11):
+for x in range(1, 21):
     cfg = SemanticFinetuneConfig(
         model="segformer",
         encoder="mit_b2",
@@ -58,11 +59,11 @@ for x in range(1, 11):
     )
 
 
-    trn_sb = make_fixed_subset(trn_ds, fraction=x/10.0, seed=42)
+    trn_sb = make_fixed_subset(trn_ds, n=x, seed=42)
     trn_loader = DataLoader(trn_sb, batch_size=cfg.batch_size, num_workers=cfg.num_workers, pin_memory=True, shuffle=True, drop_last=True,)
     val_loader = DataLoader(val_ds, batch_size=cfg.batch_size, num_workers=cfg.num_workers, pin_memory=True, shuffle=False,drop_last=False,)
 
-    logger.info("Subset=%s percen=%s", len(trn_sb), x/10.0)
+    logger.info("Subset=%s percen=%s", len(trn_sb), 0)
 
     model = setup_model(cfg)
     load_pretrained_weights(model, cfg.ckpt, device=cfg.device, strict_load=cfg.strict_load)

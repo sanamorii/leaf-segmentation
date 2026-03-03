@@ -32,7 +32,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(mes
 logger = logging.getLogger(__name__)
 
 DATASET = "bean_semantic_real"
-trn_ds, val_ds, spec = build_dataset(
+trn_ds, val_ds = build_dataset(
     dataset_id=DATASET,
     registry_path="data/datasets.yaml",
 )
@@ -42,7 +42,7 @@ run_start = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
 t0 = time.perf_counter()
 wall_start = datetime.datetime.now(datetime.timezone.utc)
 
-for x in range(1, 21):
+for x in range(1, 11):
     cfg = SemanticFinetuneConfig(
         model="segformer",
         encoder="mit_b2",
@@ -58,11 +58,11 @@ for x in range(1, 21):
     )
 
 
-    trn_sb = make_fixed_subset(trn_ds, n=x, seed=42)
+    trn_sb = make_fixed_subset(trn_ds, fraction=x/10.0, seed=42)
     trn_loader = DataLoader(trn_sb, batch_size=cfg.batch_size, num_workers=cfg.num_workers, pin_memory=True, shuffle=True, drop_last=True,)
     val_loader = DataLoader(val_ds, batch_size=cfg.batch_size, num_workers=cfg.num_workers, pin_memory=True, shuffle=False,drop_last=False,)
 
-    logger.info("Subset=%s percen=%s", len(trn_sb), 0)
+    logger.info("Subset=%s percen=%s", len(trn_sb), x/10.0)
 
     model = setup_model(cfg)
     load_pretrained_weights(model, cfg.ckpt, device=cfg.device, strict_load=cfg.strict_load)
