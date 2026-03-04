@@ -5,6 +5,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+from PIL import Image
 from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
 
@@ -13,6 +14,15 @@ from pycocotools.cocoeval import COCOeval
 from leaf_seg.common.config import InstanceEvalConfig
 from leaf_seg.common.eval import load_instance_model, print_report, save_json_results
 from leaf_seg.common.verbose import suppress_stout
+from leaf_seg.common.vis import (
+    add_title,
+    load_raw_rgb,
+    make_grid,
+    make_labeled_montage,
+    masks_to_boxes,
+    render_instance_overlay,
+    tensor_to_rgb,
+)
 from leaf_seg.dataset.build import build_dataloaders
 from leaf_seg.dataset.plantdreamer_instance import LeafCoco, coco_collate_fn
 from leaf_seg.instance.utils import (
@@ -252,4 +262,118 @@ def run(cfg: InstanceEvalConfig, registry_path: str = "data/datasets.yaml"):
     print_report(title, all_results, output_dir=cfg.output)
     save_json_results(all_results, cfg.output)
 
+    if cfg.save_vis:
+        save_visualisations(
+            model=model,
+            dataset=val_loader.dataset,
+            num_samples=cfg.num_vis_samples,
+            device=cfg.device,
+            output_dir=cfg.output,
+            score_thresh=cfg.score_thresh,
+            dataset_name=f"Mask R-CNN on {cfg.dataset}",
+        )
+
     return all_results
+
+
+@torch.no_grad()
+def save_visualisations(
+    model: torch.nn.Module,
+    dataset,
+    num_samples: int,
+    device: str,
+    output_dir: str | Path,
+    score_thresh: float = 0.5,
+    dataset_name: str = "",
+) -> None:
+    """Save instance prediction montages (Image | GT Masks | Predicted Masks)
+    for a subset of the validation set, similar to YOLO's val visualisations.
+
+    Each sample gets a labelled side-by-side montage saved individually,
+    and a combined results grid is saved at the end.
+    """
+    model.eval()
+    output_dir = Path(output_dir) / "vis"
+    (output_dir / "montage").mkdir(parents=True, exist_ok=True)
+    (output_dir / "pred_only").mkdir(parents=True, exist_ok=True)
+
+    # Unwrap Subset to reach the base dataset
+    base_ds = dataset
+    index_map: list[int] | None = None
+    if isinstance(base_ds, Subset):
+        index_map = list(base_ds.indices)
+        base_ds = base_ds.dataset
+
+    rng = np.random.default_rng(42)
+    n = min(num_samples, len(dataset))
+    idxs = rng.permutation(len(dataset))[:n].tolist()
+
+    montages: list[Image.Image] = []
+
+    for j, ds_idx in enumerate(idxs):
+        sample = dataset[ds_idx]
+        if isinstance(sample, (tuple, list)) and len(sample) >= 2:
+            img_t, target = sample[0], sample[1]
+        else:
+            img_t, target = sample, None
+
+        # Forward pass (Mask R-CNN expects list of images)
+        preds = model([img_t.to(device)])
+        pred = preds[0] if isinstance(preds, (list, tuple)) else preds
+
+        # Extract filtered predictions
+        pred_masks, pred_labels, pred_boxes = extract_predictions(pred, score_thresh)
+
+        # Get visualisation image
+        h, w = img_t.shape[-2], img_t.shape[-1]
+        raw_idx = index_map[ds_idx] if index_map is not None else ds_idx
+        img_rgb = load_raw_rgb(base_ds, raw_idx, out_hw=(h, w))
+        if img_rgb is None:
+            img_rgb = tensor_to_rgb(img_t)
+
+        # Prediction overlay
+        pred_vis = render_instance_overlay(img_rgb, pred_masks, pred_labels, pred_boxes)
+        pred_pil = Image.fromarray(pred_vis, mode="RGB")
+
+        # Save prediction-only overlay
+        pred_pil.save(output_dir / "pred_only" / f"idx{ds_idx:05d}_pred.png")
+
+        base_img = Image.fromarray(img_rgb, mode="RGB")
+        panels: list[tuple[str, Image.Image]] = [("Image", base_img)]
+
+        # Ground truth overlay (if available)
+        if target is not None and isinstance(target, dict) and "masks" in target:
+            gt_masks_t = target["masks"]
+            if torch.is_tensor(gt_masks_t):
+                gt_masks_np = gt_masks_t.detach().cpu().numpy()
+            else:
+                gt_masks_np = np.asarray(gt_masks_t)
+            if gt_masks_np.ndim == 4 and gt_masks_np.shape[1] == 1:
+                gt_masks_np = gt_masks_np[:, 0]
+
+            gt_labels_t = target.get("labels")
+            if gt_labels_t is not None:
+                gt_labels = (gt_labels_t.detach().cpu().numpy().tolist()
+                             if torch.is_tensor(gt_labels_t) else list(gt_labels_t))
+            else:
+                gt_labels = [1] * gt_masks_np.shape[0]
+
+            gt_masks_list = [(m > 0).astype(np.uint8) for m in gt_masks_np]
+            gt_boxes = masks_to_boxes(gt_masks_list)
+
+            gt_vis = render_instance_overlay(img_rgb, gt_masks_list, gt_labels, gt_boxes)
+            panels.append(("Ground Truth", Image.fromarray(gt_vis, mode="RGB")))
+
+        panels.append(("Prediction", pred_pil))
+
+        montage = make_labeled_montage(panels)
+        montage.save(output_dir / "montage" / f"idx{ds_idx:05d}_montage.png")
+        montages.append(montage)
+
+    # Combined grid
+    if montages:
+        grid = make_grid(montages, ncols=2, pad=10)
+        title = f"Instance Eval — {dataset_name}" if dataset_name else "Instance Eval"
+        grid = add_title(grid, title)
+        grid.save(output_dir / "results.png")
+        logger.info("Saved %d visualisation montages to %s", len(montages), output_dir)

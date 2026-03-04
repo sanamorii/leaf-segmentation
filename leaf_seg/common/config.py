@@ -82,22 +82,26 @@ class SemanticFinetuneConfig(SemanticTrainConfig):
 @dataclass(kw_only=True)
 class SemanticEvalConfig(BaseConfig):
     checkpoint: str
-    num_classes: int
+    num_classes: int = 4
     output: str = "results/semantic"
     device: str = get_default_device()
     resize: tuple[int,int] = (512,512)
+    save_vis: bool = False
+    num_vis_samples: int = 16
 
 @dataclass(kw_only=True)
 class InstanceEvalConfig(BaseConfig):
     model: str | None = None
     encoder: str | None = None
     checkpoint: str
-    num_classes: int
+    num_classes: int = 4
     output: str = "results/instance"
     device: str = get_default_device()
     resize: tuple[int, int] | None = None
     score_thresh: float = 0.5
     iou_thresh: float = 0.5
+    save_vis: bool = False
+    num_vis_samples: int = 16
 
 @dataclass(kw_only=True)
 class SemanticInferConfig(BaseConfig):

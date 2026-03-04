@@ -239,11 +239,13 @@ def finetune_instance(**kwargs):
 @click.option("--model", required=True, type=str)
 @click.option("--encoder", required=True, type=str)
 @click.option("--checkpoint", required=True, type=click.Path(exists=True))
-@click.option("--num-classes", required=True, type=int)
 @click.option("--dataset", required=True, type=str,
               help="Dataset registry key (from data/datasets.yaml).")
 @click.option("--batch-size", type=int, default=8)
 @click.option("--num-workers", type=int, default=4)
+@click.option("--save-vis", is_flag=True, help="Save prediction visualisation montages.")
+@click.option("--num-vis-samples", type=int, default=16, show_default=True,
+              help="Number of samples to visualise (requires --save-vis).")
 @click.option("--verbosity", "-v", count=True)
 def eval_semantic(**kwargs):
     """
@@ -261,13 +263,15 @@ def eval_semantic(**kwargs):
     opt_output("results/instance"),
 )
 @click.option("--checkpoint", required=True, type=click.Path(exists=True))
-@click.option("--num-classes", required=True, type=int)
 @click.option("--dataset", required=True, type=str,
               help="Dataset registry key (from data/datasets.yaml).")
 @click.option("--batch-size", type=int, default=4)
 @click.option("--num-workers", type=int, default=4)
 @click.option("--score-thresh", default=0.5, type=float)
 @click.option("--iou-thresh", default=0.5, type=float)
+@click.option("--save-vis", is_flag=True, help="Save prediction visualisation montages.")
+@click.option("--num-vis-samples", type=int, default=16, show_default=True,
+              help="Number of samples to visualise (requires --save-vis).")
 @click.option("--verbosity", "-v", count=True)
 def eval_instance(**kwargs):
     """
