@@ -49,11 +49,12 @@ class PlantDreamerData(Dataset):
     PlantDreamer dataset format; depth, gt, mask
     Take an array of image_paths and mask_paths - this should be aggregated outside this function.
     """
-    def __init__(self, image_paths, mask_paths, transforms=None):
+    def __init__(self, image_paths, mask_paths, transforms=None, remap=None):
         assert len(image_paths) == len(mask_paths)
         self.image_paths = image_paths
         self.mask_paths = mask_paths
         self.transforms = transforms
+        self.remap_lut = remap
         # self.n_classes = n_classes
         # self.colors_to_class = class_colors
 
@@ -68,6 +69,9 @@ class PlantDreamerData(Dataset):
         if len(mask.shape) > 2:
             raise RuntimeError("Mask is not monochrome, aborting")
         # mask = rgb_to_class(mask, class_colors=self.colors_to_class) 
+
+        # if self.remap_lut is not None:
+        #     mask = self.remap_lut[mask]
 
         if self.transforms:
             augmented = self.transforms(image=image, mask=mask)

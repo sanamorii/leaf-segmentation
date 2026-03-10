@@ -112,7 +112,6 @@ def build_dataloaders(
             train_transforms=train_transforms,
             val_transforms=val_transforms,
             image_size=image_size,
-            mean=mean, std=std,
         )
     if spec.task == "semantic":
         collate_fn = None
