@@ -259,6 +259,9 @@ def run(cfg: InstanceEvalConfig, registry_path: str = "data/datasets.yaml"):
     all_results = {**coco_results, **matching_results}
 
     title = f"INSTANCE EVAL — Mask R-CNN on {cfg.dataset}"
+    timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+    cfg.num_classes = spec.num_classes
+    cfg.output = os.path.join(cfg.output, f"{timestamp}[eval]-{model.name}")
     print_report(title, all_results, output_dir=cfg.output)
     save_json_results(all_results, cfg.output)
 

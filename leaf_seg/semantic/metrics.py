@@ -59,7 +59,7 @@ class StreamSegMetrics:
         else:
             raise ValueError(f"normalise must be one of None/'true'/'pred'/'all', got {normalise!r}")
         
-    def get_results(self):
+    def get_results(self, class_labels: dict = None):
         """Returns accuracy score evaluation result.
             - overall accuracy
             - mean accuracy
@@ -91,6 +91,10 @@ class StreamSegMetrics:
         mean_dice = dice[valid].mean() if np.any(valid) else 0.0
 
         cls_dice = dict(zip(range(self.n_classes), dice))
+
+        if class_labels is not None:
+            cls_dice = {class_labels.get(str(k), k): v for k, v in cls_dice.items()}
+            cls_iu = {class_labels.get(str(k), k): v for k, v in cls_iu.items()}
 
         return {
             "overall_acc": acc,

@@ -401,12 +401,14 @@ def fit(
 
         lr = optimiser.param_groups[0]["lr"]
         logger.info(
-            "[epoch %03d/%d] lr=%.2e train_loss=%.4f mask_loss=%.4f val_segm_AP=%.4f val_bbox_AP=%.4f%s",
+            "[epoch %03d/%d] lr=%.2e train_loss=%.4f mask_loss=%.4f val_segm_AP=%.4f val_bbox_AP=%.4f, train_time=%s, val_time=%s%s",
             epoch+1, end_epoch, lr,
             train_stats["loss_total"],
             train_stats.get("loss_mask", 0.0),
             val_stats.get("segm_AP", 0.0),
             val_stats.get("bbox_AP", 0.0),
+            str(datetime.timedelta(seconds=int(train_stats["elapsed_time"]))),
+            str(datetime.timedelta(seconds=int(val_stats["elapsed_time"]))),
             " (BEST)" if is_best else "",
         )
         if reporter is not None:
