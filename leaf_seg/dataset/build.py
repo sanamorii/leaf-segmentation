@@ -59,6 +59,13 @@ def get_dataset_spec(dataset_id: str, registry_path: str | Path) -> SemanticData
     if val_set is None:
         raise ValueError(f"Dataset '{dataset_id}' missing required key: val_set")
     
+    labels = cfg.get("labels")
+    if labels is None:
+        raise ValueError(f"Dataset '{dataset_id}' missing required key: val_set")
+
+    manifest = cfg.get("manifest", None)
+    if manifest is not None: manifest = Path(manifest)
+
     values = {
         "name":dataset_id,
         "root":Path(root),
@@ -66,6 +73,7 @@ def get_dataset_spec(dataset_id: str, registry_path: str | Path) -> SemanticData
         "num_classes": int(num_classes),
         "train_set":Path(train_set),
         "val_set":Path(val_set),
+        "manifest":manifest,
     }
     
     if task == "semantic":
@@ -77,12 +85,10 @@ def get_dataset_spec(dataset_id: str, registry_path: str | Path) -> SemanticData
         )
 
     else:  # instance
-        ann = cfg.get("ann", None)
-        if ann is not None: ann = Path(ann)
+
         return InstanceDatasetSpec(
             **values,
             image_dir=cfg.get("image_dir", "gt"),
-            ann=ann,
             remap=cfg.get("remap", True),
             filter_empty=cfg.get("filter_empty", True),
         )

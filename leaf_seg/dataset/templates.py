@@ -12,18 +12,17 @@ class DatasetSpec:
     num_classes: int
     train_set: Path
     val_set: Path
+    manifest: Optional[Path] = None
     ext: str = "png"
 
 @dataclass(frozen=True, kw_only=True)
 class SemanticDatasetSpec(DatasetSpec):
     image_dir: str = "gt"
     mask_dir: str = "masks"
-    manifest : Optional[Path] = None  ## e.g. root/manifest.jsonl
 
 @dataclass(frozen=True, kw_only=True)
 class InstanceDatasetSpec(DatasetSpec):
     image_dir: str = "gt"
-    ann: Optional[Path] = None
     remap: bool = True
     filter_empty: bool = True
     # manifest  ## e.g. root/coco.json
