@@ -8,7 +8,7 @@ from torch.utils.data import Subset, DataLoader
 
 from leaf_seg.common.build import build_optimiser, build_scheduler
 from leaf_seg.common.loss.cedice import CEDiceLoss
-from leaf_seg.dataset.plantdreamer_semantic import build_dataloaders, build_dataset
+from leaf_seg.dataset.build import build_dataloaders, build_dataset
 from leaf_seg.semantic.build import build_reporter, setup_model
 from leaf_seg.semantic.train import fit, run
 from leaf_seg.semantic.finetune import finetune, load_pretrained_weights
